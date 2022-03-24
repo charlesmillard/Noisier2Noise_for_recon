@@ -14,7 +14,7 @@ import os
 import matplotlib
 
 if len(sys.argv) == 1:
-    log_loc = 'logs/cuda/60258597_lambda_us_14'
+    log_loc = 'logs/cuda/60798198_lambda_us_70'
 else:
     if torch.cuda.is_available():
         log_loc = "logs/cuda/" + str(sys.argv[1])
@@ -65,8 +65,7 @@ else:
     config['optimizer']['batch_size'] = 1
 
 loss = 0
-loss_sing = 0
-loss_sing_rss = 0
+loss_rss = 0
 all_ssim = []
 all_ssim_sing = []
 with torch.no_grad():
@@ -112,43 +111,25 @@ with torch.no_grad():
         pad = torch.abs(y0) < torch.mean(torch.abs(y0)) / 100
         if config['data']['method'] == "n2n":
             outputs = network(y_tilde, base_net)
-            outputs[pad] = 0
-            y0_est = (outputs - K * y_tilde) / (1 - K)
-            y0_est = y0_est * (y == 0) + y
-            y0_est[pad] = 0 # set y0 padding to zero
-
-            y0_est_ssdu = outputs * (y == 0) + y
-            x0_est_ssdu = kspaceToRSS(y0_est_ssdu)
-
-            x0_est = kspaceToRSS(y0_est)
-            loss += criterion(y0_est, y0)
-
-            outputs_sing = network(y, base_net)
-            y0_est_sing = (outputs_sing - K * y) / (1 - K)
+            y0_est = outputs * (y == 0) / (1 - K) + y
         elif config['data']['method'] == "ssdu":
             outputs = network(y_tilde, base_net)
-            loss += criterion(outputs * (y_tilde == 0), y * (y_tilde == 0))
-
-            y0_est_sing = outputs * (y_tilde == 0) * (y == 0) + y_tilde + y
+            y0_est = outputs * (y == 0) + y
         else:
-            y0_est_sing = network(y, base_net)
+            y0_est = network(y, base_net)
 
-        y0_est_sing[pad] = 0
-        x0_est_sing = kspaceToRSS(y0_est_sing)
-        loss_sing_rss += criterion(x0_est_sing, x0)
+        y0_est[pad] = 0
+
+        x0_est = kspaceToRSS(y0_est)
+        loss_rss += criterion(x0_est, x0)
 
         for ii in range(x0.shape[0]):
             mx = np.array(torch.max(x0[ii].detach().cpu()))
-            if config['data']['method'] == 'n2n':
-                x1 = np.array((x0_est[ii, 0]).detach().cpu()) / mx
-                x2 = np.array((x0[ii, 0]).detach().cpu()) / mx
-                all_ssim.append(ssim(x1, x2))
-
-            x1 = np.array((x0_est_sing[ii, 0]).detach().cpu()) / mx
+            x1 = np.array((x0_est[ii, 0]).detach().cpu()) / mx
             x2 = np.array((x0[ii, 0]).detach().cpu()) / mx
             all_ssim_sing.append(ssim(x1, x2))
 
-        loss_sing += criterion(y0_est_sing, y0)
+        loss += criterion(y0_est, y0)
         if not torch.cuda.is_available():
             break
 
@@ -164,8 +145,8 @@ f.write("model location is " + log_loc + "\n")
 if config['data']['method'] == 'n2n':
     f.write("loss: {:e} \n".format(loss.item() / (i + 1)))
     f.write("SSIM: {:e} \n".format(np.mean(all_ssim)))
-f.write("singular loss: {:e} \n".format(loss_sing.item() / (i + 1)))
-f.write("RSS singular loss: {:e} \n".format(loss_sing_rss.item() / (i + 1)))
+f.write("singular loss: {:e} \n".format(loss.item() / (i + 1)))
+f.write("RSS singular loss: {:e} \n".format(loss_rss.item() / (i + 1)))
 f.write("SSIM singular: {:e} \n".format(np.mean(all_ssim_sing)))
 f.write("parameters in model: {:e} \n".format(pp))
 
@@ -183,17 +164,13 @@ mx = torch.max(torch.abs(x0[0]))
 zoomx = 100
 zoomy = 80
 zoomw = 100
-if config['data']['method'] == 'n2n':
-    saveIm(x0_est / mx, ndisp, log_loc + '/x0_est.png')
-    saveIm(x0_est[:,:, zoomx:zoomx+zoomw, zoomy:zoomy+zoomw ] / mx, ndisp, log_loc + '/x0_est_zoom.png')
-    saveColIm((x0_est - x0)*5 / (mx), ndisp, log_loc + '/x0_est_error.png', 'magma')
-    saveIm(kspaceToRSS(outputs) / mx, ndisp, log_loc + '/outputs.png')
-    saveIm((outputs[0:1, 0, 0, 208:432, 48:272] + 1j * outputs[0:1, 1, 0, 208:432, 48:272]) ** 0.2, 1, log_loc + '/outputs_kspace.png')
-    saveIm((y0_est[0:1, 0, 0, 208:432, 48:272] + 1j * y0_est[0:1, 1, 0, 208:432, 48:272]) ** 0.2, 1, log_loc + '/y0_est.png')
-    saveIm((y0_est[0:1, 0, 0, 208:432, 48:272] + 1j * y0_est[0:1, 1, 0, 208:432, 48:272] - y0[0:1, 0, 0, 208:432, 48:272] - 1j * y0[0:1, 1, 0, 208:432, 48:272]) ** 0.2, 1, log_loc + '/error_kspace.png')
-saveIm(x0_est_sing / mx, ndisp, log_loc + '/x0_est_sing.png')
-saveIm(x0_est_sing[:,:, zoomx:zoomx+zoomw, zoomy:zoomy+zoomw ] / mx, ndisp, log_loc + '/x0_est_sing_zoom.png')
-saveColIm((x0_est_sing - x0)*5 / (mx), ndisp, log_loc + '/x0_est_sing_error.png', 'magma')
+saveIm(x0_est / mx, ndisp, log_loc + '/x0_est.png')
+saveIm(x0_est[:, :, zoomx:zoomx+zoomw, zoomy:zoomy+zoomw ] / mx, ndisp, log_loc + '/x0_est_zoom.png')
+saveColIm((x0_est - x0)*5 / (mx), ndisp, log_loc + '/x0_est_error.png', 'magma')
+saveIm(kspaceToRSS(outputs) / mx, ndisp, log_loc + '/outputs.png')
+saveIm((outputs[0:1, 0, 0, 208:432, 48:272] + 1j * outputs[0:1, 1, 0, 208:432, 48:272]) ** 0.2, 1, log_loc + '/outputs_kspace.png')
+saveIm((y0_est[0:1, 0, 0, 208:432, 48:272] + 1j * y0_est[0:1, 1, 0, 208:432, 48:272]) ** 0.2, 1, log_loc + '/y0_est.png')
+saveIm((y0_est[0:1, 0, 0, 208:432, 48:272] + 1j * y0_est[0:1, 1, 0, 208:432, 48:272] - y0[0:1, 0, 0, 208:432, 48:272] - 1j * y0[0:1, 1, 0, 208:432, 48:272]) ** 0.2, 1, log_loc + '/error_kspace.png')
 saveIm(x0 / mx, ndisp, log_loc + '/x0.png')
 saveIm(x0[:,:, zoomx:zoomx+zoomw, zoomy:zoomy+zoomw]/ mx, ndisp, log_loc + '/x0_zoom.png')
 saveIm(kspaceToRSS(y_tilde) / mx, ndisp, log_loc + '/inputs.png')
@@ -204,5 +181,5 @@ saveIm(K[0:1, 0, 0, 208:432, 48:272], 1, log_loc + '/K.png')
 saveIm((y[0:1, 0, 0, 208:432, 48:272] +1j*y[0:1, 1, 0, 208:432, 48:272])**0.2, 1, log_loc + '/y_mask.png')
 saveIm((y_tilde[0:1, 0, 0, 208:432, 48:272] + 1j*y_tilde[0:1, 1, 0, 208:432, 48:272])**0.2, 1, log_loc + '/y_tilde_mask.png')
 saveIm((y0[0:1, 0, 0, 208:432, 48:272] + 1j*y0[0:1, 1, 0, 208:432, 48:272])**0.2, 1, log_loc + '/y0.png')
-saveIm((y0_est_sing[0:1, 0, 0, 208:432, 48:272] + 1j*y0_est_sing[0:1, 1, 0, 208:432, 48:272])**0.2, 1, log_loc + '/y0_est_sing.png')
-saveIm((y0_est_sing[0:1, 0, 0, 208:432, 48:272] + 1j * y0_est_sing[0:1, 1, 0, 208:432, 48:272] - y0[0:1, 0, 0, 208:432, 48:272] - 1j*y0[0:1, 1, 0, 208:432, 48:272])**0.2, 1, log_loc + '/error_kspace_sing.png')
+saveIm((y0_est[0:1, 0, 0, 208:432, 48:272] + 1j*y0_est[0:1, 1, 0, 208:432, 48:272])**0.2, 1, log_loc + '/y0_est_sing.png')
+saveIm((y0_est[0:1, 0, 0, 208:432, 48:272] + 1j * y0_est[0:1, 1, 0, 208:432, 48:272] - y0[0:1, 0, 0, 208:432, 48:272] - 1j*y0[0:1, 1, 0, 208:432, 48:272])**0.2, 1, log_loc + '/error_kspace_sing.png')

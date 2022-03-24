@@ -19,7 +19,7 @@ optimizer:
 data:
   us_fac: 4
   us_fac_lambda: 4
-  method: ssdu
+  method: n2n
   sample_type: columns
   train_trunc: 10000000
   val_trunc: 2000000

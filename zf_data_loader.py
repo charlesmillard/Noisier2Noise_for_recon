@@ -22,7 +22,8 @@ class zf_data(Dataset):
         self.fully_samp_size = config['data']['fully_samp_size']
 
         self.prob_omega = genPDF(self.nx, self.ny, 1 / config['data']['us_fac'], config['data']['poly_order'], self.fully_samp_size, self.sample_type)
-        self.lambda_sample_type = 'bern' if self.method == "ssdu" else self.sample_type
+        # self.lambda_sample_type = 'bern' if self.method == "ssdu" else self.sample_type
+        self.lambda_sample_type = self.sample_type
         self.prob_lambda = genPDF(self.nx, self.ny, 1 / config['data']['us_fac_lambda'], config['data']['poly_order'], self.fully_samp_size, self.lambda_sample_type)
 
         one_minus_eps = 1 - 1e-3
@@ -80,26 +81,14 @@ class zf_data(Dataset):
     def __getitem__(self, idx):
         np.random.seed(idx) # same mask at every epoch
         mask_omega = maskFromProb(self.prob_omega, self.sample_type)
-        np.random.seed(None)
-        if self.method == "ssdu":
-            mask_lambda = maskFromProb(self.prob_lambda*mask_omega, self.lambda_sample_type)
-            mask_lambda[self.nx//2 - self.fully_samp_size//2:self.nx//2 + self.fully_samp_size//2,
-                self.ny//2 - self.fully_samp_size//2:self.ny//2 + self.fully_samp_size//2] = 0
-            mask_theta = mask_omega*(1-mask_lambda)
-            # mask_theta[self.nx//2 - self.fully_samp_size//2:self.nx//2 + self.fully_samp_size//2,
-            #   self.ny//2 - self.fully_samp_size//2:self.ny//2 + self.fully_samp_size//2] = 1
 
-            # mask_lambda = maskFromProb(self.prob_lambda*mask_omega, self.sample_type)
-            # mask_theta = mask_omega*(1-mask_lambda)
-            # mask_theta[:, self.ny//2 - self.fully_samp_size//2:self.ny//2 + self.fully_samp_size//2] = 1
-        else:
-            mask_lambda = maskFromProb(self.prob_lambda, self.sample_type)
-            mask_theta = 0 # not used
+        np.random.seed(None)
+        mask_lambda = maskFromProb(self.prob_lambda, self.lambda_sample_type)
 
         if self.multicoil:
-            (y0, y, y_tilde) = self.get_multicoil(idx, mask_omega, mask_lambda, mask_theta)
+            (y0, y, y_tilde) = self.get_multicoil(idx, mask_omega, mask_lambda)
         else:
-            (y0, y, y_tilde) = self.get_singlecoil(idx, mask_omega, mask_lambda, mask_theta)
+            (y0, y, y_tilde) = self.get_singlecoil(idx, mask_omega, mask_lambda)
 
         return y0.float(), y.float(), y_tilde.float(), self.K.float()
 
@@ -133,7 +122,7 @@ class zf_data(Dataset):
 
         return y0, y, y_tilde
 
-    def get_multicoil(self, idx, mask_omega, mask_lambda, mask_theta):
+    def get_multicoil(self, idx, mask_omega, mask_lambda):
         file_idx = np.where(idx >= self.slice_cumsum)[0][-1]
         slice_idx = idx - self.slice_cumsum[file_idx]
 
@@ -149,12 +138,7 @@ class zf_data(Dataset):
         mask_lambda = torch.as_tensor(mask_lambda).unsqueeze(0).unsqueeze(0).int()
 
         y = mask_omega*y0
-        if self.method == "ssdu":
-            mask_theta = torch.as_tensor(mask_theta).unsqueeze(0).unsqueeze(0).int()
-            y = mask_lambda*y0
-            y_tilde = mask_theta*y0
-        else:
-            y_tilde = mask_lambda*y
+        y_tilde = mask_lambda * y
 
         mx = torch.max(kspaceToRSS(torch.unsqueeze(y, 0)))
         return y0/mx, y/mx, y_tilde/mx

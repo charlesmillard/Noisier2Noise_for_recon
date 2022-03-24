@@ -90,7 +90,6 @@ def end2end(config, trainloader, validloader, logdir):
             y = y.to(config['network']['device'])
             y_tilde = y_tilde.to(config['network']['device'])
             K = K.to(config['network']['device'])
-            # if multicoil: K = K.unsqueeze(2)
             optimizer.zero_grad()
 
             outputs = network(y_tilde, base_net)
@@ -123,8 +122,6 @@ def end2end(config, trainloader, validloader, logdir):
 
         # validate undersampled to fully sampled map
         running_loss_val = 0
-        running_loss_sing = 0
-        running_loss_doub = 0
         with torch.no_grad():
             print('validation...')
             base_net.eval()
@@ -138,39 +135,22 @@ def end2end(config, trainloader, validloader, logdir):
                 pad = torch.abs(y0) < torch.mean(torch.abs(y0)) / 100
                 if config['data']['method'] == "n2n":
                     outputs = network(y_tilde, base_net)
-                    outputs[pad] = 0
-                    y0_est = (outputs - K * y_tilde) / (1 - K)
-                    y0_est = y0_est * (y == 0) + y
-                    y0_est[pad] = 0  # set y0 padding to zero
-
-                    if config['optimizer']['weight_loss']:
-                        running_loss_val += criterion(outputs / (1 - K), y / (1 - K))
-                    else:
-                        running_loss_val += criterion(outputs, y)
-
-                    outputs_sing = network(y, base_net)
-                    y0_est_sing = (outputs_sing - K * y) / (1 - K)
-                    running_loss_sing += criterion(y0_est_sing, y0)
-                    running_loss_doub += criterion(y0_est, y0)
+                    y0_est = outputs * (y == 0)/(1 - K) + y
                 elif config['data']['method'] == "ssdu":
                     outputs = network(y_tilde, base_net)
-                    running_loss_val += criterion(outputs * (y != 0), y)
-
-                    y0_est_sing = outputs * (y_tilde == 0) * (y == 0) + y_tilde + y
-                    running_loss_sing += criterion(y0_est_sing, y0)
+                    y0_est = outputs * (y == 0) + y
                 else:
-                    y0_est_sing = network(y, base_net)
-                    running_loss_val += criterion(y0_est_sing, y0)
+                    y0_est = network(y, base_net)
+
+                y0_est[pad] = 0
+                running_loss_val += criterion(y0_est, y0)
 
                 if not torch.cuda.is_available():
                     if i % nshow == (nshow - 1):
                         break
 
-        writer.add_scalar('Validation_losses/MSE_loss_doub', running_loss_doub / (i + 1), epoch)
         writer.add_scalar('Validation_losses/MSE_loss', running_loss_val / (i + 1), epoch)
-        writer.add_scalar('Validation_losses/MSE_loss_sing', running_loss_sing / (i + 1), epoch)
         print('Validation loss is {:e}'.format(running_loss_val / (i + 1)))
-        print('Noisier2gt loss is {:e}'.format(running_loss_sing / (i + 1)))
 
         loss_val_all.append(running_loss_val)
 
@@ -190,7 +170,7 @@ def end2end(config, trainloader, validloader, logdir):
             xzf = torchvision.utils.make_grid(xzf).detach().cpu()
             writer.add_image('CNN input', xzf / xnorm)
 
-        x0_est = kspaceToRSS(y0_est_sing[0:4])
+        x0_est = kspaceToRSS(y0_est[0:4])
         x0_est = torchvision.utils.make_grid(x0_est).detach().cpu()
         writer.add_image('estimate', x0_est / xnorm)
 
