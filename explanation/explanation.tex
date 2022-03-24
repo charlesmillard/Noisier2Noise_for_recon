@@ -1,0 +1,76 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=0.5in]{geometry}
+
+\usepackage{bm, dsfont, algorithmic, algorithm, braket, amsmath, amssymb, amsthm, cite, url}
+\usepackage{graphicx}
+\usepackage[toc,page]{appendix}
+\usepackage{subfig}
+\usepackage{stackengine}
+\usepackage{hhline}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+
+\newtheorem{theorem}{Theorem}
+
+\theoremstyle{plain}
+\newtheorem{thm}{Theorem}[section] % reset theorem numbering for each chapter
+
+\theoremstyle{definition}
+\newtheorem{claim}[thm]{Claim}
+
+\DeclareMathOperator*{\argmin}{arg\,min}
+\newcommand*{\defeq}{\stackrel{\text{def}}{=}}
+
+
+\newcommand{\exampleMatReconKnee}{multi_coil/example_recons/knee1_bern_us_10/}
+\newcommand{\exampleMatReconBrain}{multi_coil/example_recons/brain1_pd_us_10/}
+\newcommand{\exampleMatReconA}{multi_coil/example_recons/angio2_res_pd_5/}
+
+\newcommand{\exampleSEbern}{multi_coil/example_recons/brain1_bern_us_10_rho_100/}
+\newcommand{\exampleSEbernDamped}{multi_coil/example_recons/brain1_bern_us_10_rho_75/}
+\newcommand{\exampleSEpd}{multi_coil/example_recons/brain1_pd_us_10_rho_75/}
+
+\newcommand{\tauAcc}{multi_coil/tau_accuracy/}
+
+
+\title{Noisier2Noise for MRI}
+\author{Charlie Millard}
+\date{\today}
+
+\begin{document}
+\maketitle
+The goal of this document is to describe how to apply Noisier2noise to MRI.
+
+Let's say we have data 
+\begin{align}
+	y = M_\Omega y_0
+\end{align}
+where $y_0$ is ground truth k-space and $M_\Omega$ is a diagonal sampling mask with sampling set $\Omega$. Let $P_\Omega = \mathds{E}\{M_\Omega\}$. Now consider the multiplication of $y$ by another mask: 
+\begin{align}
+	\widetilde{y} = M_\Lambda y = M_\Lambda M_\Omega y_0
+\end{align}
+and let $P_\Lambda = \mathds{E}\{M_\Lambda\}$. 
+
+Section 3.4 of Noiser2noise can be generalised to variable density sampling, which leads to:
+\begin{align}
+	\mathds{E}\{ y_0 | \widetilde{y} \} = (\mathds{1} - K)^{-1} (\mathds{E}\{ y | \widetilde{y}\} - K y) 
+\end{align}
+where $K =  (\mathds{1} - P_\Omega P_\Lambda)^{-1}(\mathds{1} - P_\Omega)$. 
+
+In other words, we can estimate $y_0$ by training a network to estimate $\mathds{E}\{ y | \widetilde{y}\}$ and applying the above formula. Note that the CNN does not need to be applied in the Fourier domain: one could first apply an inverse Fourier transform.
+
+$M_\Lambda$ and $M_\Omega$ do not need to be drawn from the same distribution. One may be tempted to choose a distribution $M_\Lambda$ that only undersamples by a small amount. But there is a trade-off, because $K \rightarrow \mathds{1}$ when $P_\Lambda \rightarrow \mathds{1}$, so $(\mathds{1} - K)^{-1}$ explodes. Therefore any errors in the CNN would be greatly magnified. 
+
+\section{Discussion}
+
+We had previously discussed using VDAMP's error propagation formula to simlate noise. The above method has a number of advantages. 
+\begin{itemize}
+\item Unlike VDAMP's error propagation, our `noise' model here is exact 
+\item It can be applied to completely arbitrary sampling (I think)
+\item It is computationally simpler - no need to compute the wavelt-domain aliasing model
+\end{itemize}
+
+It is much closer to SSDU. Its advantange over SSDU is that it is mathematically justified, so hopefully we can get it working!
+
+\end{document}
