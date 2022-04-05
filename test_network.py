@@ -14,7 +14,7 @@ import os
 import matplotlib
 
 if len(sys.argv) == 1:
-    log_loc = 'logs/cuda/60798198_lambda_us_70'
+    log_loc = 'logs/cuda/significant_logs_columns_multicoil_6casc/n2n_multilambda_8/59626802_lambda_us_8'
 else:
     if torch.cuda.is_available():
         log_loc = "logs/cuda/" + str(sys.argv[1])
@@ -64,10 +64,10 @@ else:
     config['network']['device'] = 'cpu'
     config['optimizer']['batch_size'] = 1
 
-loss = 0
-loss_rss = 0
+loss = []
+loss_rss = []
 all_ssim = []
-all_ssim_sing = []
+all_hfen = []
 with torch.no_grad():
     multicoil = config['data']['multicoil']
     if config['network']['type'] == 'unet':
@@ -79,7 +79,7 @@ with torch.no_grad():
         print(config['network']['ncascades'])
         network = passVarnet
 
-    sd = 350 #110, 140, 200, 220, 250, 280
+    sd = 380 #380
     np.random.seed(sd)
     torch.manual_seed(sd)
     torch.cuda.manual_seed_all(sd)
@@ -121,17 +121,27 @@ with torch.no_grad():
         y0_est[pad] = 0
 
         x0_est = kspaceToRSS(y0_est)
-        loss_rss += criterion(x0_est, x0)
 
         for ii in range(x0.shape[0]):
             mx = np.array(torch.max(x0[ii].detach().cpu()))
             x1 = np.array((x0_est[ii, 0]).detach().cpu()) / mx
             x2 = np.array((x0[ii, 0]).detach().cpu()) / mx
-            all_ssim_sing.append(ssim(x1, x2))
+            all_ssim.append(ssim(x1, x2))
+            all_hfen.append(hfen(x1, x2))
+            loss.append(nmse(np.asarray(y0_est.detach().cpu()), np.asarray(y0.detach().cpu())))
+            loss_rss.append(nmse(x1, x2))
 
-        loss += criterion(y0_est, y0)
         if not torch.cuda.is_available():
             break
+
+def remove_nans(x):
+    x = x * ~np.isnan(x)
+    return x[x != 0]
+
+all_ssim = remove_nans(all_ssim)
+all_hfen = remove_nans(all_hfen)
+loss = remove_nans(loss)
+loss_rss = remove_nans(loss_rss)
 
 ndisp = 8
 if not torch.cuda.is_available():
@@ -142,12 +152,10 @@ if not torch.cuda.is_available():
 
 f = open(log_loc + "/test_results.txt", 'w')
 f.write("model location is " + log_loc + "\n")
-if config['data']['method'] == 'n2n':
-    f.write("loss: {:e} \n".format(loss.item() / (i + 1)))
-    f.write("SSIM: {:e} \n".format(np.mean(all_ssim)))
-f.write("singular loss: {:e} \n".format(loss.item() / (i + 1)))
-f.write("RSS singular loss: {:e} \n".format(loss_rss.item() / (i + 1)))
-f.write("SSIM singular: {:e} \n".format(np.mean(all_ssim_sing)))
+f.write("loss: {:e} \n".format(10*np.log10(np.mean(loss).item())))
+f.write("RSS loss: {:e} \n".format(10*np.log10(np.mean(loss_rss).item())))
+f.write("SSIM: {:e} \n".format(np.mean(all_ssim)))
+f.write("HFEN: {:e} \n".format(10*np.log10(np.mean(all_hfen))))
 f.write("parameters in model: {:e} \n".format(pp))
 
 def saveIm(im, ndisp, name):

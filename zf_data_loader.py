@@ -34,6 +34,7 @@ class zf_data(Dataset):
 
         print('K in corner of k-space is {}'.format(self.K[0, 0, 0, 0]))
 
+
         if os.path.isdir('/home/fs0/xsd618/'): # jalapeno
             if self.multicoil:
                 root = '/home/fs0/xsd618/scratch/fastMRI_brain/multicoil_'

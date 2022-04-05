@@ -18,7 +18,7 @@ optimizer:
 #----- configure the data loader
 data:
   us_fac: 4
-  us_fac_lambda: 4
+  us_fac_lambda: 1000
   method: n2n
   sample_type: columns
   train_trunc: 10000000

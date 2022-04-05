@@ -3,6 +3,7 @@ import yaml
 import numpy as np
 import torch
 import torch.nn.functional as F
+import scipy.ndimage as nd
 
 def load_config(cname):
     """ loads yaml file """
@@ -148,3 +149,11 @@ def kspaceToRSS(y):
     (_, nx, ny) = x.shape
     x = x[:, nx//2 - 160:nx//2+160, ny//2-160:ny//2+160]
     return x.unsqueeze(1)
+
+def hfen(x, x0):
+    loG = nd.gaussian_laplace(x - x0, sigma=1.5)
+    loss = np.sqrt(np.mean(loG**2)/np.mean(x0**2))
+    return loss
+
+def nmse(x, x0):
+    return np.mean(np.abs(x - x0)**2)/np.mean(np.abs(x0)**2)

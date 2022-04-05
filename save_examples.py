@@ -13,14 +13,16 @@ import sys
 import os
 import matplotlib
 
-type = '8'
+type = '4'
 root = 'logs/cuda/significant_logs_columns_multicoil_6casc/'
 if type == '4':
     log_loc = [root + 'full_4', root + 'ssdu_multilambda_4/60008780_lambda_us_2',
+               root + 'ssdu_prop_multilambda_4/61125448_lambda_us_20',
                root + 'n2n_multilambda_4_unweighted/60213858_lambda_us_8',
                root + 'n2n_multilambda_4/59623615_lambda_us_8']
 elif type == '8':
     log_loc = [root + 'full_8', root + 'ssdu_multilambda_8/60258597_lambda_us_12',
+               root + 'ssdu_prop_multilambda_8/61031656_lambda_us_20',
                root + 'n2n_multilambda_8_unweighted/60214892_lambda_us_8',
                root + 'n2n_multilambda_8/59626802_lambda_us_8']
 elif type == '4m_unw':
@@ -40,13 +42,15 @@ elif type == '8m':
     log_loc = [root + 'n2n_multilambda_8/59626802_lambda_us_2', root + 'n2n_multilambda_8/59626802_lambda_us_4',
                root + 'n2n_multilambda_8/59626802_lambda_us_6', root + 'n2n_multilambda_8/59626802_lambda_us_8']
 
+
+
 xz = 120
 yz = 60
 wth = 100
 
 with torch.no_grad():
     for l in log_loc:
-        sd = 320 # 260, 310, 320, 420
+        sd = 420 # 260, 310, 320, 420
         np.random.seed(sd)
         torch.manual_seed(sd)
         torch.cuda.manual_seed_all(sd)
@@ -72,12 +76,10 @@ with torch.no_grad():
             pad = torch.abs(y0) < torch.mean(torch.abs(y0)) / 100
             if config['data']['method'] == "n2n":
                 outputs = network(y_tilde, base_net)
-                outputs[pad] = 0
-                y0_est = (outputs - K * y_tilde) / (1 - K)
-                y0_est = y0_est * (y == 0) + y
+                y0_est = outputs * (y == 0) / (1 - K) + y
             elif config['data']['method'] == "ssdu":
                 outputs = network(y_tilde, base_net)
-                y0_est = outputs * (y_tilde == 0) * (y == 0) + y_tilde + y
+                y0_est = outputs * (y == 0) + y
             else:
                 y0_est = network(y, base_net)
 
@@ -98,6 +100,6 @@ def saveIm(im, ndisp, name):
     im = torchvision.utils.make_grid(im, nrow=4).detach().cpu()
     torchvision.utils.save_image(im, name)
 
-
+print('seed is {}'.format(sd))
 torchvision.utils.save_image(torch.as_tensor(x0_est_all), 'saved_images/x_' + str(sd) + '_' + type + '.png')
 torchvision.utils.save_image(torch.as_tensor(x0_est_zoom), 'saved_images/x_' + str(sd) + '_' + type + '_zoom.png')
