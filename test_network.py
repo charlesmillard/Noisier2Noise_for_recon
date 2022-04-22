@@ -13,13 +13,20 @@ import sys
 import os
 import matplotlib
 
+
+
+
 if len(sys.argv) == 1:
-    log_loc = 'logs/cuda/significant_logs_columns_multicoil_6casc/n2n_multilambda_8/59626802_lambda_us_8'
+    log_loc = 'logs/cuda/significant_logs_columns_multicoil_6casc/4x/ssdu_multilambda_4/63807851_lambda_us_20'
 else:
-    if torch.cuda.is_available():
-        log_loc = "logs/cuda/" + str(sys.argv[1])
-    else:
-        log_loc = "logs/cpu/" + str(sys.argv[1])
+    all_net_logs = []
+    for l in os.walk('logs/cuda/4.0x'):
+        if l[0][-1] not in ['u', 'n', 'd', 'x']:
+            all_net_logs.append(l[0])
+    for q in os.walk('logs/cuda/8.0x'):
+        if q[0][-1] not in ['u', 'n', 'd', 'x']:
+            all_net_logs.append(q[0])
+    log_loc = all_net_logs[int(sys.argv[1]) - 1]
 
 config = load_config(log_loc + '/config')
 
@@ -64,6 +71,8 @@ else:
     config['network']['device'] = 'cpu'
     config['optimizer']['batch_size'] = 1
 
+
+
 loss = []
 loss_rss = []
 all_ssim = []
@@ -106,42 +115,39 @@ with torch.no_grad():
         y_tilde = y_tilde.to(config['network']['device'])
         K = K.to(config['network']['device'])
 
-        x0 = kspaceToRSS(y0)
-
         pad = torch.abs(y0) < torch.mean(torch.abs(y0)) / 100
         if config['data']['method'] == "n2n":
             outputs = network(y_tilde, base_net)
             y0_est = outputs * (y == 0) / (1 - K) + y
-        elif config['data']['method'] == "ssdu":
+        elif config['data']['method'] in ["ssdu", "ssdu_bern"]:
             outputs = network(y_tilde, base_net)
             y0_est = outputs * (y == 0) + y
         else:
             y0_est = network(y, base_net)
 
+        print(torch.sum(torch.isnan(y0)), torch.sum(torch.isnan(y0_est)))
+
         y0_est[pad] = 0
 
+        x0 = kspaceToRSS(y0)
         x0_est = kspaceToRSS(y0_est)
 
+        loss = []
+        loss_rss = []
+        all_ssim = []
+        all_hfen = []
         for ii in range(x0.shape[0]):
             mx = np.array(torch.max(x0[ii].detach().cpu()))
             x1 = np.array((x0_est[ii, 0]).detach().cpu()) / mx
             x2 = np.array((x0[ii, 0]).detach().cpu()) / mx
             all_ssim.append(ssim(x1, x2))
-            all_hfen.append(hfen(x1, x2))
-            loss.append(nmse(np.asarray(y0_est.detach().cpu()), np.asarray(y0.detach().cpu())))
+            # all_hfen.append(hfen(x1, x2))
+            loss.append(nmse(np.asarray(y0_est[ii].detach().cpu()), np.asarray(y0[ii].detach().cpu())))
             loss_rss.append(nmse(x1, x2))
 
+        print(loss)
         if not torch.cuda.is_available():
             break
-
-def remove_nans(x):
-    x = x * ~np.isnan(x)
-    return x[x != 0]
-
-all_ssim = remove_nans(all_ssim)
-all_hfen = remove_nans(all_hfen)
-loss = remove_nans(loss)
-loss_rss = remove_nans(loss_rss)
 
 ndisp = 8
 if not torch.cuda.is_available():
@@ -157,6 +163,8 @@ f.write("RSS loss: {:e} \n".format(10*np.log10(np.mean(loss_rss).item())))
 f.write("SSIM: {:e} \n".format(np.mean(all_ssim)))
 f.write("HFEN: {:e} \n".format(10*np.log10(np.mean(all_hfen))))
 f.write("parameters in model: {:e} \n".format(pp))
+
+np.savez(log_loc + '/results.npz', loss=loss, loss_rss=loss_rss, all_ssim=all_ssim, all_hfen=all_hfen)
 
 def saveIm(im, ndisp, name):
     im = torch.abs(im[0:ndisp])

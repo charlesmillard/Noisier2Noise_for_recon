@@ -22,8 +22,7 @@ class zf_data(Dataset):
         self.fully_samp_size = config['data']['fully_samp_size']
 
         self.prob_omega = genPDF(self.nx, self.ny, 1 / config['data']['us_fac'], config['data']['poly_order'], self.fully_samp_size, self.sample_type)
-        # self.lambda_sample_type = 'bern' if self.method == "ssdu" else self.sample_type
-        self.lambda_sample_type = self.sample_type
+        self.lambda_sample_type = 'bern_inv' if self.method == "ssdu_bern" else self.sample_type
         self.prob_lambda = genPDF(self.nx, self.ny, 1 / config['data']['us_fac_lambda'], config['data']['poly_order'], self.fully_samp_size, self.lambda_sample_type)
 
         one_minus_eps = 1 - 1e-3

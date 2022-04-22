@@ -4,6 +4,8 @@ Created on Nov 1st 2021
 
 @author: Charles Millard
 """
+import os
+
 import sys
 import torchvision
 
@@ -98,7 +100,7 @@ def end2end(config, trainloader, validloader, logdir):
                     loss = criterion(outputs / (1 - K), y / (1 - K))
                 else:
                     loss = criterion(outputs, y)
-            elif config['data']['method'] == "ssdu":
+            elif config['data']['method'] in ["ssdu", "ssdu_bern"]:
                 loss = criterion(outputs * (y != 0), y)
             else:
                 loss = criterion(outputs, y0)
@@ -136,7 +138,7 @@ def end2end(config, trainloader, validloader, logdir):
                 if config['data']['method'] == "n2n":
                     outputs = network(y_tilde, base_net)
                     y0_est = outputs * (y == 0)/(1 - K) + y
-                elif config['data']['method'] == "ssdu":
+                elif config['data']['method'] in ["ssdu", "ssdu_bern"]:
                     outputs = network(y_tilde, base_net)
                     y0_est = outputs * (y == 0) + y
                 else:
@@ -157,7 +159,7 @@ def end2end(config, trainloader, validloader, logdir):
         torch.save(base_net.state_dict(), logdir + '/state_dict')
         if running_loss_val == min(loss_val_all):
             print('** Best validation performance so far **')
-            torch.save(base_net.state_dict(), logdir + '/state_dict_best')
+            # torch.save(base_net.state_dict(), logdir + '/state_dict_best')
 
         # save examples from validation set
         if epoch == 0:
@@ -188,8 +190,20 @@ if __name__ == '__main__':
     print('using config file ', config_name)
 
     if len(sys.argv) >= 3:
-        config['data']['us_fac_lambda'] = float(sys.argv[2])/10
-        print('Changed undersampling of lambda to {}'.format(sys.argv[2]))
+        all_exp = np.load('all_exp.npy')
+        idx = int(sys.argv[2]) - 1
+        config['data']['us_fac'] = float(all_exp[idx][0])
+        config['data']['us_fac_lambda'] = float(all_exp[idx][1])
+        type = all_exp[idx][2]
+        if type[0:3] == 'n2n':
+            config['data']['method'] = 'n2n'
+            if type[3:] == '_weighted':
+                config['optimizer']['weight_loss'] = True
+            else:
+                config['optimizer']['weight_loss'] = False
+
+        # config['data']['us_fac_lambda'] = float(sys.argv[2])/10
+        # print('Changed undersampling of lambda to {}'.format(sys.argv[2]))
 
     if torch.cuda.is_available():
         config['network']['device'] = 'cuda'
@@ -210,7 +224,10 @@ if __name__ == '__main__':
     elif len(sys.argv) == 2:
         logdir = logdir + str(sys.argv[1])
     else:
-        logdir = logdir + str(sys.argv[1]) + '_lambda_us_' + str(sys.argv[2])
+        logdir = logdir + '/' + str(config['data']['us_fac']) + 'x/' + type + '/' + str(sys.argv[1]) + '_' + str(config['data']['us_fac_lambda'])
+
+    if ~os.path.isdir(logdir):
+        os.makedirs(logdir, exist_ok=True)
 
     print('Saving results to directory ', logdir)
 

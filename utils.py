@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import scipy.ndimage as nd
+# import cv2
 
 def load_config(cname):
     """ loads yaml file """
@@ -151,7 +152,8 @@ def kspaceToRSS(y):
     return x.unsqueeze(1)
 
 def hfen(x, x0):
-    loG = nd.gaussian_laplace(x - x0, sigma=1.5)
+    blur = cv2.GaussianBlur(x-x0, (3, 3), 0)
+    loG = cv2.Laplacian(blur, cv2.CV_64F)
     loss = np.sqrt(np.mean(loG**2)/np.mean(x0**2))
     return loss
 

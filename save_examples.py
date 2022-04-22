@@ -13,7 +13,7 @@ import sys
 import os
 import matplotlib
 
-type = '4'
+type = '8ssdu'
 root = 'logs/cuda/significant_logs_columns_multicoil_6casc/'
 if type == '4':
     log_loc = [root + 'full_4', root + 'ssdu_multilambda_4/60008780_lambda_us_2',
@@ -41,8 +41,12 @@ elif type == '4m':
 elif type == '8m':
     log_loc = [root + 'n2n_multilambda_8/59626802_lambda_us_2', root + 'n2n_multilambda_8/59626802_lambda_us_4',
                root + 'n2n_multilambda_8/59626802_lambda_us_6', root + 'n2n_multilambda_8/59626802_lambda_us_8']
-
-
+elif type == '4ssdu':
+    log_loc = [root + '4x/ssdu_prop_multilambda_4/64772912_lambda_us_11', root + '4x/ssdu_prop_multilambda_4/64772912_lambda_us_15',
+               root + '4x/ssdu_prop_multilambda_4/61125448_lambda_us_20', root + '4x/ssdu_prop_multilambda_4/61125448_lambda_us_40']
+elif type == '8ssdu':
+    log_loc = [root + '8x/ssdu_prop_multilambda_8/63755831_lambda_us_11', root + '8x/ssdu_prop_multilambda_8/63755831_lambda_us_15',
+               root + '8x/ssdu_prop_multilambda_8/61031656_lambda_us_20', root + '8x/ssdu_prop_multilambda_8/61031656_lambda_us_40']
 
 xz = 120
 yz = 60
@@ -77,7 +81,7 @@ with torch.no_grad():
             if config['data']['method'] == "n2n":
                 outputs = network(y_tilde, base_net)
                 y0_est = outputs * (y == 0) / (1 - K) + y
-            elif config['data']['method'] == "ssdu":
+            elif config['data']['method'] in ["ssdu", "ssdu_bern"]:
                 outputs = network(y_tilde, base_net)
                 y0_est = outputs * (y == 0) + y
             else:
