@@ -8,13 +8,10 @@ LICENSE file in the root directory of this source tree.
 from typing import List, Optional
 
 import torch
-from packaging import version
-
-if version.parse(torch.__version__) >= version.parse("1.7.0"):
-    import torch.fft  # type: ignore
+import torch.fft
 
 
-def fft2c_old(data: torch.Tensor) -> torch.Tensor:
+def fft2c_new(data: torch.Tensor, norm: str = "ortho") -> torch.Tensor:
     """
     Apply centered 2 dimensional Fast Fourier Transform.
 
@@ -22,50 +19,7 @@ def fft2c_old(data: torch.Tensor) -> torch.Tensor:
         data: Complex valued input data containing at least 3 dimensions:
             dimensions -3 & -2 are spatial dimensions and dimension -1 has size
             2. All other dimensions are assumed to be batch dimensions.
-
-    Returns:
-        The FFT of the input.
-    """
-    if not data.shape[-1] == 2:
-        raise ValueError("Tensor does not have separate complex dim.")
-
-    data = ifftshift(data, dim=[-3, -2])
-    data = torch.fft(data, 2, normalized=True)
-    data = fftshift(data, dim=[-3, -2])
-
-    return data
-
-
-def ifft2c_old(data: torch.Tensor) -> torch.Tensor:
-    """
-    Apply centered 2-dimensional Inverse Fast Fourier Transform.
-
-    Args:
-        data: Complex valued input data containing at least 3 dimensions:
-            dimensions -3 & -2 are spatial dimensions and dimension -1 has size
-            2. All other dimensions are assumed to be batch dimensions.
-
-    Returns:
-        The IFFT of the input.
-    """
-    if not data.shape[-1] == 2:
-        raise ValueError("Tensor does not have separate complex dim.")
-
-    data = ifftshift(data, dim=[-3, -2])
-    data = torch.ifft(data, 2, normalized=True)
-    data = fftshift(data, dim=[-3, -2])
-
-    return data
-
-
-def fft2c_new(data: torch.Tensor) -> torch.Tensor:
-    """
-    Apply centered 2 dimensional Fast Fourier Transform.
-
-    Args:
-        data: Complex valued input data containing at least 3 dimensions:
-            dimensions -3 & -2 are spatial dimensions and dimension -1 has size
-            2. All other dimensions are assumed to be batch dimensions.
+        norm: Normalization mode. See ``torch.fft.fft``.
 
     Returns:
         The FFT of the input.
@@ -76,7 +30,7 @@ def fft2c_new(data: torch.Tensor) -> torch.Tensor:
     data = ifftshift(data, dim=[-3, -2])
     data = torch.view_as_real(
         torch.fft.fftn(  # type: ignore
-            torch.view_as_complex(data), dim=(-2, -1), norm="ortho"
+            torch.view_as_complex(data), dim=(-2, -1), norm=norm
         )
     )
     data = fftshift(data, dim=[-3, -2])
@@ -84,7 +38,7 @@ def fft2c_new(data: torch.Tensor) -> torch.Tensor:
     return data
 
 
-def ifft2c_new(data: torch.Tensor) -> torch.Tensor:
+def ifft2c_new(data: torch.Tensor, norm: str = "ortho") -> torch.Tensor:
     """
     Apply centered 2-dimensional Inverse Fast Fourier Transform.
 
@@ -92,6 +46,7 @@ def ifft2c_new(data: torch.Tensor) -> torch.Tensor:
         data: Complex valued input data containing at least 3 dimensions:
             dimensions -3 & -2 are spatial dimensions and dimension -1 has size
             2. All other dimensions are assumed to be batch dimensions.
+        norm: Normalization mode. See ``torch.fft.ifft``.
 
     Returns:
         The IFFT of the input.
@@ -102,7 +57,7 @@ def ifft2c_new(data: torch.Tensor) -> torch.Tensor:
     data = ifftshift(data, dim=[-3, -2])
     data = torch.view_as_real(
         torch.fft.ifftn(  # type: ignore
-            torch.view_as_complex(data), dim=(-2, -1), norm="ortho"
+            torch.view_as_complex(data), dim=(-2, -1), norm=norm
         )
     )
     data = fftshift(data, dim=[-3, -2])

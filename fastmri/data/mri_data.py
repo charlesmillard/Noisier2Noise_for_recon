@@ -11,11 +11,23 @@ import pickle
 import random
 import xml.etree.ElementTree as etree
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
 from warnings import warn
 
 import h5py
 import numpy as np
+import pandas as pd
+import requests
 import torch
 import yaml
 
@@ -98,6 +110,12 @@ def fetch_dir(
     return Path(data_dir)
 
 
+class FastMRIRawDataSample(NamedTuple):
+    fname: Path
+    slice_ind: int
+    metadata: Dict[str, Any]
+
+
 class CombinedSliceDataset(torch.utils.data.Dataset):
     """
     A container for combining slice datasets.
@@ -108,10 +126,12 @@ class CombinedSliceDataset(torch.utils.data.Dataset):
         roots: Sequence[Path],
         challenges: Sequence[str],
         transforms: Optional[Sequence[Optional[Callable]]] = None,
-        sample_rates: Optional[Sequence[float]] = None,
+        sample_rates: Optional[Sequence[Optional[float]]] = None,
+        volume_sample_rates: Optional[Sequence[Optional[float]]] = None,
         use_dataset_cache: bool = False,
         dataset_cache_file: Union[str, Path, os.PathLike] = "dataset_cache.pkl",
         num_cols: Optional[Tuple[int]] = None,
+        raw_sample_filter: Optional[Callable] = None,
     ):
         """
         Args:
@@ -123,26 +143,49 @@ class CombinedSliceDataset(torch.utils.data.Dataset):
                 function should take 'kspace', 'target', 'attributes',
                 'filename', and 'slice' as inputs. 'target' may be null for
                 test data.
-            sample_rates: A float between 0 and 1. This controls what fraction
-                of the volumes should be loaded.
+            sample_rates: Optional; A sequence of floats between 0 and 1.
+                This controls what fraction of the slices should be loaded.
+                When creating subsampled datasets either set sample_rates
+                (sample by slices) or volume_sample_rates (sample by volumes)
+                but not both.
+            volume_sample_rates: Optional; A sequence of floats between 0 and 1.
+                This controls what fraction of the volumes should be loaded.
+                When creating subsampled datasets either set sample_rates
+                (sample by slices) or volume_sample_rates (sample by volumes)
+                but not both.
             use_dataset_cache: Whether to cache dataset metadata. This is very
                 useful for large datasets like the brain data.
             dataset_cache_file: Optional; A file in which to cache dataset
                 information for faster load times.
             num_cols: Optional; If provided, only slices with the desired
                 number of columns will be considered.
+            raw_sample_filter: Optional; A callable object that takes an raw_sample
+                metadata as input and returns a boolean indicating whether the
+                raw_sample should be included in the dataset.
         """
+        if sample_rates is not None and volume_sample_rates is not None:
+            raise ValueError(
+                "either set sample_rates (sample by slices) or volume_sample_rates (sample by volumes) but not both"
+            )
         if transforms is None:
             transforms = [None] * len(roots)
         if sample_rates is None:
-            sample_rates = [1.0] * len(roots)
-        if not (len(roots) == len(transforms) == len(challenges) == len(sample_rates)):
+            sample_rates = [None] * len(roots)
+        if volume_sample_rates is None:
+            volume_sample_rates = [None] * len(roots)
+        if not (
+            len(roots)
+            == len(transforms)
+            == len(challenges)
+            == len(sample_rates)
+            == len(volume_sample_rates)
+        ):
             raise ValueError(
                 "Lengths of roots, transforms, challenges, sample_rates do not match"
             )
 
         self.datasets = []
-        self.examples: List[Tuple[Path, int, Dict[str, object]]] = []
+        self.raw_samples: List[FastMRIRawDataSample] = []
         for i in range(len(roots)):
             self.datasets.append(
                 SliceDataset(
@@ -150,13 +193,15 @@ class CombinedSliceDataset(torch.utils.data.Dataset):
                     transform=transforms[i],
                     challenge=challenges[i],
                     sample_rate=sample_rates[i],
+                    volume_sample_rate=volume_sample_rates[i],
                     use_dataset_cache=use_dataset_cache,
                     dataset_cache_file=dataset_cache_file,
                     num_cols=num_cols,
+                    raw_sample_filter=raw_sample_filter,
                 )
             )
 
-            self.examples = self.examples + self.datasets[-1].examples
+            self.raw_samples = self.raw_samples + self.datasets[-1].raw_samples
 
     def __len__(self):
         return sum(len(dataset) for dataset in self.datasets)
@@ -179,10 +224,12 @@ class SliceDataset(torch.utils.data.Dataset):
         root: Union[str, Path, os.PathLike],
         challenge: str,
         transform: Optional[Callable] = None,
-        sample_rate: float = 1.0,
         use_dataset_cache: bool = False,
+        sample_rate: Optional[float] = None,
+        volume_sample_rate: Optional[float] = None,
         dataset_cache_file: Union[str, Path, os.PathLike] = "dataset_cache.pkl",
         num_cols: Optional[Tuple[int]] = None,
+        raw_sample_filter: Optional[Callable] = None,
     ):
         """
         Args:
@@ -193,17 +240,31 @@ class SliceDataset(torch.utils.data.Dataset):
                 data into appropriate form. The transform function should take
                 'kspace', 'target', 'attributes', 'filename', and 'slice' as
                 inputs. 'target' may be null for test data.
-            sample_rate: A float between 0 and 1. This controls what fraction
-                of the volumes should be loaded.
             use_dataset_cache: Whether to cache dataset metadata. This is very
                 useful for large datasets like the brain data.
+            sample_rate: Optional; A float between 0 and 1. This controls what fraction
+                of the slices should be loaded. Defaults to 1 if no value is given.
+                When creating a sampled dataset either set sample_rate (sample by slices)
+                or volume_sample_rate (sample by volumes) but not both.
+            volume_sample_rate: Optional; A float between 0 and 1. This controls what fraction
+                of the volumes should be loaded. Defaults to 1 if no value is given.
+                When creating a sampled dataset either set sample_rate (sample by slices)
+                or volume_sample_rate (sample by volumes) but not both.
             dataset_cache_file: Optional; A file in which to cache dataset
                 information for faster load times.
             num_cols: Optional; If provided, only slices with the desired
                 number of columns will be considered.
+            raw_sample_filter: Optional; A callable object that takes an raw_sample
+                metadata as input and returns a boolean indicating whether the
+                raw_sample should be included in the dataset.
         """
         if challenge not in ("singlecoil", "multicoil"):
             raise ValueError('challenge should be either "singlecoil" or "multicoil"')
+
+        if sample_rate is not None and volume_sample_rate is not None:
+            raise ValueError(
+                "either set sample_rate (sample by slices) or volume_sample_rate (sample by volumes) but not both"
+            )
 
         self.dataset_cache_file = Path(dataset_cache_file)
 
@@ -211,7 +272,17 @@ class SliceDataset(torch.utils.data.Dataset):
         self.recons_key = (
             "reconstruction_esc" if challenge == "singlecoil" else "reconstruction_rss"
         )
-        self.examples = []
+        self.raw_samples = []
+        if raw_sample_filter is None:
+            self.raw_sample_filter = lambda raw_sample: True
+        else:
+            self.raw_sample_filter = raw_sample_filter
+
+        # set default sampling mode if none given
+        if sample_rate is None:
+            sample_rate = 1.0
+        if volume_sample_rate is None:
+            volume_sample_rate = 1.0
 
         # load dataset cache if we have and user wants to use it
         if self.dataset_cache_file.exists() and use_dataset_cache:
@@ -227,29 +298,43 @@ class SliceDataset(torch.utils.data.Dataset):
             for fname in sorted(files):
                 metadata, num_slices = self._retrieve_metadata(fname)
 
-                self.examples += [
-                    (fname, slice_ind, metadata) for slice_ind in range(num_slices)
-                ]
+                new_raw_samples = []
+                for slice_ind in range(num_slices):
+                    raw_sample = FastMRIRawDataSample(fname, slice_ind, metadata)
+                    if self.raw_sample_filter(raw_sample):
+                        new_raw_samples.append(raw_sample)
+
+                self.raw_samples += new_raw_samples
 
             if dataset_cache.get(root) is None and use_dataset_cache:
-                dataset_cache[root] = self.examples
+                dataset_cache[root] = self.raw_samples
                 logging.info(f"Saving dataset cache to {self.dataset_cache_file}.")
-                with open(self.dataset_cache_file, "wb") as f:
-                    pickle.dump(dataset_cache, f)
+                with open(self.dataset_cache_file, "wb") as cache_f:
+                    pickle.dump(dataset_cache, cache_f)
         else:
             logging.info(f"Using dataset cache from {self.dataset_cache_file}.")
-            self.examples = dataset_cache[root]
+            self.raw_samples = dataset_cache[root]
 
         # subsample if desired
-        if sample_rate < 1.0:
-            random.shuffle(self.examples)
-            num_examples = round(len(self.examples) * sample_rate)
-            self.examples = self.examples[:num_examples]
+        if sample_rate < 1.0:  # sample by slice
+            random.shuffle(self.raw_samples)
+            num_raw_samples = round(len(self.raw_samples) * sample_rate)
+            self.raw_samples = self.raw_samples[:num_raw_samples]
+        elif volume_sample_rate < 1.0:  # sample by volume
+            vol_names = sorted(list(set([f[0].stem for f in self.raw_samples])))
+            random.shuffle(vol_names)
+            num_volumes = round(len(vol_names) * volume_sample_rate)
+            sampled_vols = vol_names[:num_volumes]
+            self.raw_samples = [
+                raw_sample
+                for raw_sample in self.raw_samples
+                if raw_sample[0].stem in sampled_vols
+            ]
 
         if num_cols:
-            self.examples = [
+            self.raw_samples = [
                 ex
-                for ex in self.examples
+                for ex in self.raw_samples
                 if ex[2]["encoding_size"][1] in num_cols  # type: ignore
             ]
 
@@ -279,20 +364,21 @@ class SliceDataset(torch.utils.data.Dataset):
 
             num_slices = hf["kspace"].shape[0]
 
-        metadata = {
-            "padding_left": padding_left,
-            "padding_right": padding_right,
-            "encoding_size": enc_size,
-            "recon_size": recon_size,
-        }
+            metadata = {
+                "padding_left": padding_left,
+                "padding_right": padding_right,
+                "encoding_size": enc_size,
+                "recon_size": recon_size,
+                **hf.attrs,
+            }
 
         return metadata, num_slices
 
     def __len__(self):
-        return len(self.examples)
+        return len(self.raw_samples)
 
     def __getitem__(self, i: int):
-        fname, dataslice, metadata = self.examples[i]
+        fname, dataslice, metadata = self.raw_samples[i]
 
         with h5py.File(fname, "r") as hf:
             kspace = hf["kspace"][dataslice]
@@ -310,3 +396,187 @@ class SliceDataset(torch.utils.data.Dataset):
             sample = self.transform(kspace, mask, target, attrs, fname.name, dataslice)
 
         return sample
+
+
+class AnnotatedSliceDataset(SliceDataset):
+    """
+    A PyTorch Dataset that provides access to MR image slices with annotation.
+
+    This is a subclass from SliceDataset that incorporates functionality of the fastMRI+ dataset.
+    It can be used to download the csv file from fastMRI+ based on the specified version using git hash.
+    It parses the csv and links it to samples in SliceDataset as annotated_raw_samples.
+
+    Github: https://github.com/microsoft/fastmri-plus
+    Paper: https://arxiv.org/abs/2109.03812
+    """
+
+    def __init__(
+        self,
+        root: Union[str, Path, os.PathLike],
+        challenge: str,
+        subsplit: str,
+        multiple_annotation_policy: str,
+        transform: Optional[Callable] = None,
+        use_dataset_cache: bool = False,
+        sample_rate: Optional[float] = None,
+        volume_sample_rate: Optional[float] = None,
+        dataset_cache_file: Union[str, Path, os.PathLike] = "dataset_cache.pkl",
+        num_cols: Optional[Tuple[int]] = None,
+        annotation_version: Optional[str] = None,
+    ):
+        """
+        Args:
+            root: Path to the dataset.
+            challenge: "singlecoil" or "multicoil" depending on which challenge
+                to use.
+            subsplit: 'knee' or 'brain' depending on which dataset to use.
+            multiple_annotation_policy: 'first', 'random' or 'all'.
+                If 'first', then only use the first annotation.
+                If 'random', then pick an annotation at random.
+                If 'all' then two or more copies of the same slice for each annotation
+                will be extended.
+            transform: Optional; A callable object that pre-processes the raw
+                data into appropriate form. The transform function should take
+                'kspace', 'target', 'attributes', 'filename', and 'slice' as
+                inputs. 'target' may be null for test data.
+            use_dataset_cache: Whether to cache dataset metadata. This is very
+                useful for large datasets like the brain data.
+            sample_rate: Optional; A float between 0 and 1. This controls what fraction
+                of the slices should be loaded. Defaults to 1 if no value is given.
+                When creating a sampled dataset either set sample_rate (sample by slices)
+                or volume_sample_rate (sample by volumes) but not both.
+            volume_sample_rate: Optional; A float between 0 and 1. This controls what fraction
+                of the volumes should be loaded. Defaults to 1 if no value is given.
+                When creating a sampled dataset either set sample_rate (sample by slices)
+                or volume_sample_rate (sample by volumes) but not both.
+            dataset_cache_file: Optional; A file in which to cache dataset
+                information for faster load times.
+            num_cols: Optional; If provided, only slices with the desired
+                number of columns will be considered.
+            annotation_version: Optional; If provided, a specific version of csv file will be downloaded based on its git hash.
+                Default value is None, then the latest version will be used.
+        """
+
+        # subclass SliceDataset
+        super().__init__(
+            root,
+            challenge,
+            transform,
+            use_dataset_cache,
+            sample_rate,
+            volume_sample_rate,
+            dataset_cache_file,
+            num_cols,
+        )
+
+        self.annotated_raw_samples = []
+
+        if subsplit not in ("knee", "brain"):
+            raise ValueError('subsplit should be either "knee" or "brain"')
+        if multiple_annotation_policy not in ("first", "random", "all"):
+            raise ValueError(
+                'multiple_annotation_policy should be "single", "random", or "all"'
+            )
+
+        # download csv file from github using git hash to find certain version
+        annotation_name = f"{subsplit}{annotation_version}.csv"
+        annotation_path = Path(os.getcwd(), ".annotation_cache", annotation_name)
+        if not annotation_path.is_file():
+            annotation_path = self.download_csv(
+                annotation_version, subsplit, annotation_path
+            )
+        annotations_csv = pd.read_csv(annotation_path)
+
+        for raw_sample in self.raw_samples:
+            fname, slice_ind, metadata = raw_sample
+
+            # using filename and slice to find desired annotation
+            annotations_df = annotations_csv[
+                (annotations_csv["file"] == fname.stem)
+                & (annotations_csv["slice"] == slice_ind)
+            ]
+            annotations_list = annotations_df.itertuples(index=True, name="Pandas")
+
+            # if annotation (filename or slice) not found, fill in empty values
+            if len(annotations_df) == 0:
+                annotation = self.get_annotation(True, None)
+                metadata["annotation"] = annotation
+                self.annotated_raw_samples.append(
+                    list([fname, slice_ind, metadata.copy()])
+                )
+
+            elif len(annotations_df) == 1:
+                rows = list(annotations_list)[0]
+                annotation = self.get_annotation(False, rows)
+                metadata["annotation"] = annotation
+                self.annotated_raw_samples.append(
+                    list([fname, slice_ind, metadata.copy()])
+                )
+
+            else:
+                # only use the first annotation
+                if multiple_annotation_policy == "first":
+                    rows = list(annotations_list)[0]
+                    annotation = self.get_annotation(False, rows)
+                    metadata["annotation"] = annotation
+                    self.annotated_raw_samples.append(
+                        list([fname, slice_ind, metadata.copy()])
+                    )
+
+                # use an annotation at random
+                elif multiple_annotation_policy == "random":
+                    random_number = torch.randint(len(annotations_df) - 1, (1,))
+                    rows = list(annotations_list)[random_number]
+                    annotation = self.get_annotation(False, rows)
+                    metadata["annotation"] = annotation
+                    self.annotated_raw_samples.append(
+                        list([fname, slice_ind, metadata.copy()])
+                    )
+
+                # extend raw samples to have tow copies of the same slice, one for each annotation
+                elif multiple_annotation_policy == "all":
+                    for rows in annotations_list:
+                        annotation = self.get_annotation(False, rows)
+                        metadata["annotation"] = annotation
+                        self.annotated_raw_samples.append(
+                            list([fname, slice_ind, metadata.copy()])
+                        )
+
+    def get_annotation(self, empty_value, row):
+        if empty_value is True:
+            annotation = {
+                "fname": "",
+                "slice": "",
+                "study_level": "",
+                "x": -1,
+                "y": -1,
+                "width": -1,
+                "height": -1,
+                "label": "",
+            }
+        else:
+            annotation = {
+                "fname": str(row.file),
+                "slice": int(row.slice),
+                "study_level": str(row.study_level),
+                "x": int(row.x),
+                "y": 320 - int(row.y) - int(row.height) - 1,
+                "width": int(row.width),
+                "height": int(row.height),
+                "label": str(row.label),
+            }
+        return annotation
+
+    def download_csv(self, version, subsplit, path):
+        # request file by git hash and mri type
+        url = f"https://raw.githubusercontent.com/microsoft/fastmri-plus/{version}/Annotations/{subsplit}.csv"
+        request = requests.get(url, timeout=10, stream=True)
+
+        # create temporary folders
+        Path(".annotation_cache").mkdir(parents=True, exist_ok=True)
+
+        # download csv from github and save it locally
+        with open(path, "wb") as fh:
+            for chunk in request.iter_content(1024 * 1024):
+                fh.write(chunk)
+        return path

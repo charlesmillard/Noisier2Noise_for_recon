@@ -1,21 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Created on Nov 1st 2021
-
 @author: Charles Millard
 """
 import os
-
-import sys
 import torchvision
 
-from utils import *
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 
-from fastmri.models.unet import Unet
-from fastmri.models.varnet import VarNet
+from varnet_modified import VarNet
+
+from utils import *
 from zf_data_loader import zf_data
 
 DTYPE = torch.float32
@@ -24,59 +20,20 @@ DTYPE = torch.float32
 def end2end(config, trainloader, validloader, logdir):
     writer = SummaryWriter(logdir)
 
-    print('method at dump: ' + config['data']['method'])
     with open(logdir + '/config', 'w') as fp:
         yaml.dump(config, fp, default_flow_style=False)
 
-    # a = banana
-    multicoil = config['data']['multicoil']
-    if config['network']['type'] == 'unet':
-        chans = 2*config['data']['nc'] if multicoil else 2
-        base_net = Unet(in_chans=chans, out_chans=chans)
-        network = passUnet
-    elif config['network']['type'] == 'varnet':
-        base_net = VarNet(num_cascades=config['network']['ncascades'])
-        network = passVarnet
-
+    base_net = VarNet(num_cascades=config['network']['ncascades'])
+    network = pass_varnet
     base_net.to(config['network']['device'])
 
     # create optimizer
-    if config['optimizer']['name'] == 'Adam':
-        optimizer = torch.optim.Adam(base_net.parameters(), lr=float(config['optimizer']['lr'])
-                                     , weight_decay=float(config['optimizer']['weight_decay']))
-    elif config['optimizer']['name'] == 'SGD':
-        optimizer = torch.optim.SGD(base_net.parameters(), lr=float(config['optimizer']['lr'])
-                                    , weight_decay=float(config['optimizer']['weight_decay']),
-                                    momentum=float(config['optimizer']['momentum']))
-    else:
-        raise NameError('You have chosen an invalid optimizer name')
-
-    if config['optimizer']['loss'] == 'mse':
-        criterion = MSEloss
-    elif config['optimizer']['loss'] == 'rmse':
-        criterion = RMSEloss
-    elif config['optimizer']['loss'] == 'l1':
-        criterion = torch.nn.L1Loss()
-    elif config['optimizer']['loss'] == 'l1l2':
-        criterion = l12loss
-    else:
-        raise NameError('You have chosen an invalid loss')
+    optimizer = torch.optim.Adam(base_net.parameters(), lr=float(config['optimizer']['lr']),
+                                 weight_decay=float(config['optimizer']['weight_decay']))
+    criterion = mse_loss
 
     epoch_frac_save = 10
-    if not torch.cuda.is_available():
-        nshow = 1
-        dev = 'cpu'
-    else:
-        nshow = trainloader.__len__() // epoch_frac_save
-        dev = 'cuda'
-
-    try:
-        loc = 'logs/cuda/' + str(config['optimizer']['load_model_loc'])
-        base_net.load_state_dict(torch.load(loc + '/state_dict_best', map_location=dev))
-        print('model loading successful, using ' + str(config['optimizer'][
-            'load_model_loc']) + ' as parameter initialisation')
-    except:
-        print('model loading unsucessful - using random parameter initialisation')
+    nshow = trainloader.__len__() // epoch_frac_save if torch.cuda.is_available() else 1
 
     loss_val_all = []
     for epoch in range(config['optimizer']['epochs']):
@@ -84,9 +41,7 @@ def end2end(config, trainloader, validloader, logdir):
         print('epoch|minibatch|Label loss')
 
         j = 0
-
         running_loss = 0
-
         base_net.train()
         for i, data in enumerate(trainloader, 0):
             y0, y, y_tilde, K = data
@@ -94,6 +49,7 @@ def end2end(config, trainloader, validloader, logdir):
             y = y.to(config['network']['device'])
             y_tilde = y_tilde.to(config['network']['device'])
             K = K.to(config['network']['device'])
+
             optimizer.zero_grad()
 
             outputs = network(y_tilde, base_net)
@@ -104,27 +60,24 @@ def end2end(config, trainloader, validloader, logdir):
                     loss = criterion(outputs, y)
             elif config['data']['method'] in ["ssdu", "ssdu_bern"]:
                 loss = criterion(outputs * (y != 0), y)
-            else:
+            else:  # fully supervised
                 loss = criterion(outputs, y0)
 
             running_loss += loss
-
             loss.backward()
             optimizer.step()
 
             if i % nshow == (nshow - 1):  # print every nshow mini-batches
-                print('%d    |   %d    |%e ' %
-                      (epoch + 1, i + 1, running_loss / nshow))
+                print('%d    |   %d    |%e ' % (epoch + 1, i + 1, running_loss / nshow))
                 writer.add_scalar('Training_losses/MSE_loss', running_loss / nshow, epoch * epoch_frac_save + j)
 
-                if not torch.cuda.is_available():  # truncate training when on my machine
-                    if j == 0:
-                        break
+                if not torch.cuda.is_available():  # truncate training when local
+                    print('truncating training as gpu not available')
+                    break
 
                 running_loss = 0
                 j += 1
 
-        # validate undersampled to fully sampled map
         running_loss_val = 0
         with torch.no_grad():
             print('validation...')
@@ -139,100 +92,65 @@ def end2end(config, trainloader, validloader, logdir):
                 pad = torch.abs(y0) < torch.mean(torch.abs(y0)) / 100
                 if config['data']['method'] == "n2n":
                     outputs = network(y_tilde, base_net)
-                    y0_est = outputs * (y == 0)/(1 - K) + y
+                    y0_est = outputs * (y == 0) / (1 - K) + y
                 elif config['data']['method'] in ["ssdu", "ssdu_bern"]:
                     outputs = network(y_tilde, base_net)
                     y0_est = outputs * (y == 0) + y
                 else:
                     y0_est = network(y, base_net)
 
-                y0_est[pad] = 0
+                y0_est[pad] = 0  # remove zero-padding found in y0
                 running_loss_val += criterion(y0_est, y0)
 
-                if not torch.cuda.is_available():
-                    if i % nshow == (nshow - 1):
-                        break
+                if not torch.cuda.is_available() and i % nshow == (nshow - 1):
+                    break
 
         writer.add_scalar('Validation_losses/MSE_loss', running_loss_val / (i + 1), epoch)
         print('Validation loss is {:e}'.format(running_loss_val / (i + 1)))
 
         loss_val_all.append(running_loss_val)
-
         torch.save(base_net.state_dict(), logdir + '/state_dict')
-        if running_loss_val == min(loss_val_all):
-            print('** Best validation performance so far **')
-            # torch.save(base_net.state_dict(), logdir + '/state_dict_best')
 
         # save examples from validation set
         if epoch == 0:
-            x0 = kspaceToRSS(y0[0:4])
+            x0 = kspace_to_rss(y0[0:4])
             x0 = torchvision.utils.make_grid(x0).detach().cpu()
             xnorm = torch.max(x0)
             writer.add_image('ground_truth', x0 / xnorm)
 
-            xzf = kspaceToRSS(y_tilde[0:4])
+            xzf = kspace_to_rss(y_tilde[0:4])
             xzf = torchvision.utils.make_grid(xzf).detach().cpu()
             writer.add_image('CNN input', xzf / xnorm)
 
-        x0_est = kspaceToRSS(y0_est[0:4])
+        x0_est = kspace_to_rss(y0_est[0:4])
         x0_est = torchvision.utils.make_grid(x0_est).detach().cpu()
         writer.add_image('estimate', x0_est / xnorm)
 
-    return network
-
 
 if __name__ == '__main__':
-    np.random.seed(463)
     torch.set_default_dtype(DTYPE)
     torch.backends.cudnn.enabled = False
 
     config_name = 'config.yaml'
-
     config = load_config(config_name)
     print('using config file ', config_name)
-
-    if len(sys.argv) >= 3:
-        all_exp = np.load('all_exp.npy')
-        idx = int(sys.argv[2]) - 1
-        config['data']['us_fac'] = float(all_exp[idx][0])
-        config['data']['us_fac_lambda'] = float(all_exp[idx][1])
-        training_method = all_exp[idx][2]
-        config['data']['method'] = str(training_method)
-        print(config['data']['method'])
-        if training_method[0:3] == 'n2n':
-            config['data']['method'] = 'n2n'
-            if training_method[3:] == '_weighted':
-                config['optimizer']['weight_loss'] = True
-            else:
-                config['optimizer']['weight_loss'] = False
-
-        # config['data']['us_fac_lambda'] = float(sys.argv[2])/10
-        # print('Changed undersampling of lambda to {}'.format(sys.argv[2]))
 
     if torch.cuda.is_available():
         config['network']['device'] = 'cuda'
     else:
         config['network']['device'] = 'cpu'
-        config['optimizer']['batch_size'] = 2  # small batch size so can handle on my machine
+        config['optimizer']['batch_size'] = 2  # small batch size so can debug locally
 
     np.random.seed(config['seed'])
     torch.manual_seed(config['seed'])
     torch.cuda.manual_seed_all(config['seed'])
 
     train_load = DataLoader(zf_data('train', config), batch_size=config['optimizer']['batch_size'], shuffle=True)
-    valid_load = DataLoader(zf_data('val', config), batch_size=3*config['optimizer']['batch_size'])
+    valid_load = DataLoader(zf_data('val', config), batch_size=3 * config['optimizer']['batch_size'])
 
-    logdir = "logs/" + config['network']['device'] + '/'
-    if len(sys.argv) == 1:
-        logdir = logdir + datetime.now().strftime("%Y%m%d-%H%M%S")
-    elif len(sys.argv) == 2:
-        logdir = logdir + str(sys.argv[1])
-    else:
-        logdir = logdir + '/' + str(config['data']['us_fac']) + 'x/' + training_method + '/' + str(sys.argv[1]) + '_' + str(config['data']['us_fac_lambda'])
-
+    logdir = "logs/" + config['network']['device'] + '/' + datetime.now().strftime("%Y%m%d-%H%M%S")
     if ~os.path.isdir(logdir):
         os.makedirs(logdir, exist_ok=True)
 
     print('Saving results to directory ', logdir)
-
-    network = end2end(config, train_load, valid_load, logdir)
+    end2end(config, train_load, valid_load, logdir)

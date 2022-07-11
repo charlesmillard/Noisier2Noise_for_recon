@@ -7,8 +7,9 @@ LICENSE file in the root directory of this source tree.
 
 from argparse import ArgumentParser
 
-import fastmri
 import torch
+
+import fastmri
 from fastmri.data import transforms
 from fastmri.models import VarNet
 
@@ -58,6 +59,15 @@ class VarNetModule(MriModule):
             lr_step_size: Learning rate step size.
             lr_gamma: Learning rate gamma decay.
             weight_decay: Parameter for penalizing weights norm.
+            num_sense_lines: Number of low-frequency lines to use for sensitivity map
+                computation, must be even or `None`. Default `None` will automatically
+                compute the number from masks. Default behaviour may cause some slices to
+                use more low-frequency lines than others, when used in conjunction with
+                e.g. the EquispacedMaskFunc defaults. To prevent this, either set
+                `num_sense_lines`, or set `skip_low_freqs` and `skip_around_low_freqs`
+                to `True` in the EquispacedMaskFunc. Note that setting this value may
+                lead to undesired behaviour when training on multiple accelerations
+                simultaneously.
         """
         super().__init__(**kwargs)
         self.save_hyperparameters()
@@ -82,54 +92,53 @@ class VarNetModule(MriModule):
 
         self.loss = fastmri.SSIMLoss()
 
-    def forward(self, masked_kspace, mask):
-        return self.varnet(masked_kspace, mask)
+    def forward(self, masked_kspace, mask, num_low_frequencies):
+        return self.varnet(masked_kspace, mask, num_low_frequencies)
 
     def training_step(self, batch, batch_idx):
-        masked_kspace, mask, target, _, _, max_value, _ = batch
+        output = self(batch.masked_kspace, batch.mask, batch.num_low_frequencies)
 
-        output = self(masked_kspace, mask)
-
-        target, output = transforms.center_crop_to_smallest(target, output)
-        loss = self.loss(output.unsqueeze(1), target.unsqueeze(1), data_range=max_value)
+        target, output = transforms.center_crop_to_smallest(batch.target, output)
+        loss = self.loss(
+            output.unsqueeze(1), target.unsqueeze(1), data_range=batch.max_value
+        )
 
         self.log("train_loss", loss)
 
         return loss
 
     def validation_step(self, batch, batch_idx):
-        masked_kspace, mask, target, fname, slice_num, max_value, _ = batch
-
-        output = self.forward(masked_kspace, mask)
-        target, output = transforms.center_crop_to_smallest(target, output)
+        output = self.forward(
+            batch.masked_kspace, batch.mask, batch.num_low_frequencies
+        )
+        target, output = transforms.center_crop_to_smallest(batch.target, output)
 
         return {
             "batch_idx": batch_idx,
-            "fname": fname,
-            "slice_num": slice_num,
-            "max_value": max_value,
+            "fname": batch.fname,
+            "slice_num": batch.slice_num,
+            "max_value": batch.max_value,
             "output": output,
             "target": target,
             "val_loss": self.loss(
-                output.unsqueeze(1), target.unsqueeze(1), data_range=max_value
+                output.unsqueeze(1), target.unsqueeze(1), data_range=batch.max_value
             ),
         }
 
     def test_step(self, batch, batch_idx):
-        masked_kspace, mask, _, fname, slice_num, _, crop_size = batch
-        crop_size = crop_size[0]  # always have a batch size of 1 for varnet
-
-        output = self(masked_kspace, mask)
+        output = self(batch.masked_kspace, batch.mask, batch.num_low_frequencies)
 
         # check for FLAIR 203
-        if output.shape[-1] < crop_size[1]:
+        if output.shape[-1] < batch.crop_size[1]:
             crop_size = (output.shape[-1], output.shape[-1])
+        else:
+            crop_size = batch.crop_size
 
         output = transforms.center_crop(output, crop_size)
 
         return {
-            "fname": fname,
-            "slice": slice_num,
+            "fname": batch.fname,
+            "slice": batch.slice_num,
             "output": output.cpu().numpy(),
         }
 

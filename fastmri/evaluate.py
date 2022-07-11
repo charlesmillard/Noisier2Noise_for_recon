@@ -12,7 +12,7 @@ from typing import Optional
 
 import h5py
 import numpy as np
-# from runstats import Statistics
+from runstats import Statistics
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
 from fastmri.data import transforms
@@ -25,21 +25,30 @@ def mse(gt: np.ndarray, pred: np.ndarray) -> np.ndarray:
 
 def nmse(gt: np.ndarray, pred: np.ndarray) -> np.ndarray:
     """Compute Normalized Mean Squared Error (NMSE)"""
-    return np.linalg.norm(gt - pred) ** 2 / np.linalg.norm(gt) ** 2
+    return np.array(np.linalg.norm(gt - pred) ** 2 / np.linalg.norm(gt) ** 2)
 
 
-def psnr(gt: np.ndarray, pred: np.ndarray) -> np.ndarray:
+def psnr(
+    gt: np.ndarray, pred: np.ndarray, maxval: Optional[float] = None
+) -> np.ndarray:
     """Compute Peak Signal to Noise Ratio metric (PSNR)"""
-    return peak_signal_noise_ratio(gt, pred, data_range=gt.max())
+    if maxval is None:
+        maxval = gt.max()
+    return peak_signal_noise_ratio(gt, pred, data_range=maxval)
 
 
 def ssim(
     gt: np.ndarray, pred: np.ndarray, maxval: Optional[float] = None
 ) -> np.ndarray:
     """Compute Structural Similarity Index Metric (SSIM)"""
+    if not gt.ndim == 3:
+        raise ValueError("Unexpected number of dimensions in ground truth.")
+    if not gt.ndim == pred.ndim:
+        raise ValueError("Ground truth dimensions does not match pred.")
+
     maxval = gt.max() if maxval is None else maxval
 
-    ssim = 0
+    ssim = np.array([0])
     for slice_num in range(gt.shape[0]):
         ssim = ssim + structural_similarity(
             gt[slice_num], pred[slice_num], data_range=maxval

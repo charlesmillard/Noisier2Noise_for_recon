@@ -102,7 +102,7 @@ class Unet(nn.Module):
             output = torch.cat([output, downsample_layer], dim=1)
             output = conv(output)
 
-        return output + image
+        return output
 
 
 class ConvBlock(nn.Module):

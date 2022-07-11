@@ -1,37 +1,27 @@
 ---
 # ------------------ Training configurations ------------------------
-seed: 100               # seed to initialize random number generators
-
+seed: 456
 #------ optimizer
 optimizer:
-  name: Adam
   weight_decay: 0
-  momentum: 0.9
   lr: 0.0001
-  decay_milestones: [] #[5, 10, 30] # which epoch does the lr decay
-  loss: mse # l1, mse or rmse
-  weight_loss: True
+  weight_loss: True # (1-K)^-1 weighting? (for Noisier2Noise only)
   batch_size: 5
   epochs: 150
-  load_model_loc: 0
 
-#----- configure the data loader
+#----- data loader
 data:
-  us_fac: 4
-  us_fac_lambda: 4
-  method: ssdu_bern
-  sample_type: columns
-  train_trunc: 10000000
-  val_trunc: 2000000
-  multicoil: True
+  location: /home/xsd618/data/fastMRI_test_subset_brain # location of data
+  us_fac: 4 # acceleration factor of first mask
+  us_fac_lambda: 2 # acceleration factor of second mask
+  method: ssdu # choose from "full", "n2n", "ssdu" and "ssdu_bern" for fully supervised, Noisier2Noise, proposed SSDU or original SSDU
+  sample_type: columns # choose from "columns" or "bern"
+  fully_samp_size: 8 # fully sampled central region
+  poly_order: 8 # polynomial order of variable density scheme
   nx: 640
   ny: 320
   nc: 16
-  fully_samp_size: 8
-  poly_order: 8
 
 #----- network params
 network:
-  device: cuda     # uses cpu if gpu not available
-  type: varnet
-  ncascades: 5
+  ncascades: 5 # number of VarNet parameters

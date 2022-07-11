@@ -3,19 +3,21 @@ Copyright (c) Facebook, Inc. and its affiliates.
 
 This source code is licensed under the MIT license found in the
 LICENSE file in the root directory of this source tree.
+
+This VarNet code from the fastMRI package has been slightly modified to output k-space (not the cropped RSS estimate),
+as required for Noisier2Noise.
 """
 
 import math
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
+import fastmri
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-import fastmri
 from fastmri.data import transforms
 
-from .unet import Unet
+from fastmri.models.unet import Unet
 
 
 class NormUnet(nn.Module):
@@ -69,8 +71,8 @@ class NormUnet(nn.Module):
         b, c, h, w = x.shape
         x = x.view(b, 2, c // 2 * h * w)
 
-        mean = x.mean(dim=2).view(b, 2, 1, 1)
-        std = x.std(dim=2).view(b, 2, 1, 1)
+        mean = x.mean(dim=2).view(b, c, 1, 1)
+        std = x.std(dim=2).view(b, c, 1, 1)
 
         x = x.view(b, c, h, w)
 
@@ -142,7 +144,6 @@ class SensitivityModel(nn.Module):
         in_chans: int = 2,
         out_chans: int = 2,
         drop_prob: float = 0.0,
-        mask_center: bool = True,
     ):
         """
         Args:
@@ -151,11 +152,9 @@ class SensitivityModel(nn.Module):
             in_chans: Number of channels in the input to the U-Net model.
             out_chans: Number of channels in the output to the U-Net model.
             drop_prob: Dropout probability.
-            mask_center: Whether to mask center of k-space for sensitivity map
-                calculation.
         """
         super().__init__()
-        self.mask_center = mask_center
+
         self.norm_unet = NormUnet(
             chans,
             num_pools,
@@ -178,49 +177,27 @@ class SensitivityModel(nn.Module):
     def divide_root_sum_of_squares(self, x: torch.Tensor) -> torch.Tensor:
         return x / fastmri.rss_complex(x, dim=1).unsqueeze(-1).unsqueeze(1)
 
-    def get_pad_and_num_low_freqs(
-        self, mask: torch.Tensor, num_low_frequencies: Optional[int] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        if num_low_frequencies is None or num_low_frequencies == 0:
-            # get low frequency line locations and mask them out
-            squeezed_mask = mask[:, 0, 0, :, 0].to(torch.int8)
-            cent = squeezed_mask.shape[1] // 2
-            # running argmin returns the first non-zero
-            left = torch.argmin(squeezed_mask[:, :cent].flip(1), dim=1)
-            right = torch.argmin(squeezed_mask[:, cent:], dim=1)
-            num_low_frequencies_tensor = torch.max(
-                2 * torch.min(left, right), torch.ones_like(left)
-            )  # force a symmetric center unless 1
-        else:
-            num_low_frequencies_tensor = num_low_frequencies * torch.ones(
-                mask.shape[0], dtype=mask.dtype, device=mask.device
-            )
-
-        pad = (mask.shape[-2] - num_low_frequencies_tensor + 1) // 2
-
-        return pad, num_low_frequencies_tensor
-
-    def forward(
-        self,
-        masked_kspace: torch.Tensor,
-        mask: torch.Tensor,
-        num_low_frequencies: Optional[int] = None,
-    ) -> torch.Tensor:
-        if self.mask_center:
-            pad, num_low_freqs = self.get_pad_and_num_low_freqs(
-                mask, num_low_frequencies
-            )
-            masked_kspace = transforms.batched_mask_center(
-                masked_kspace, pad, pad + num_low_freqs
-            )
-
-        # convert to image space
-        images, batches = self.chans_to_batch_dim(fastmri.ifft2c(masked_kspace))
+    def forward(self, masked_kspace: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        # get low frequency line locations and mask them out
+        # cent = mask.shape[-2] // 2
+        # left = torch.nonzero(mask.squeeze()[:cent] == 0)[-1]
+        # right = torch.nonzero(mask.squeeze()[cent:] == 0)[0] + cent
+        #
+        num_low_freqs = 10 # right - left
+        pad = (mask.shape[-2] - num_low_freqs + 1) // 2
+        # convert to image space = 0
+        x = transforms.mask_center(masked_kspace, pad, pad + num_low_freqs)
+        # x = masked_kspace
+        x = fastmri.ifft2c(x)
+        x, b = self.chans_to_batch_dim(x)
 
         # estimate sensitivities
-        return self.divide_root_sum_of_squares(
-            self.batch_chans_to_chan_dim(self.norm_unet(images), batches)
-        )
+        x = self.norm_unet(x)
+        x[torch.isnan(x)] = 0
+        x = self.batch_chans_to_chan_dim(x, b)
+        x = self.divide_root_sum_of_squares(x)
+
+        return x
 
 
 class VarNet(nn.Module):
@@ -228,7 +205,7 @@ class VarNet(nn.Module):
     A full variational network model.
 
     This model applies a combination of soft data consistency with a U-Net
-    regularizer. To use non-U-Net regularizers, use VarNetBlock.
+    regularizer. To use non-U-Net regularizers, use VarNetBock.
     """
 
     def __init__(
@@ -238,7 +215,6 @@ class VarNet(nn.Module):
         sens_pools: int = 4,
         chans: int = 18,
         pools: int = 4,
-        mask_center: bool = True,
     ):
         """
         Args:
@@ -250,33 +226,22 @@ class VarNet(nn.Module):
             chans: Number of channels for cascade U-Net.
             pools: Number of downsampling and upsampling layers for cascade
                 U-Net.
-            mask_center: Whether to mask center of k-space for sensitivity map
-                calculation.
         """
         super().__init__()
 
-        self.sens_net = SensitivityModel(
-            chans=sens_chans,
-            num_pools=sens_pools,
-            mask_center=mask_center,
-        )
+        self.sens_net = SensitivityModel(sens_chans, sens_pools)
         self.cascades = nn.ModuleList(
             [VarNetBlock(NormUnet(chans, pools)) for _ in range(num_cascades)]
         )
 
-    def forward(
-        self,
-        masked_kspace: torch.Tensor,
-        mask: torch.Tensor,
-        num_low_frequencies: Optional[int] = None,
-    ) -> torch.Tensor:
-        sens_maps = self.sens_net(masked_kspace, mask, num_low_frequencies)
+    def forward(self, masked_kspace: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        sens_maps = self.sens_net(masked_kspace, mask)
         kspace_pred = masked_kspace.clone()
 
         for cascade in self.cascades:
             kspace_pred = cascade(kspace_pred, masked_kspace, mask, sens_maps)
 
-        return fastmri.rss(fastmri.complex_abs(fastmri.ifft2c(kspace_pred)), dim=1)
+        return kspace_pred #fastmri.rss(fastmri.complex_abs(fastmri.ifft2c(kspace_pred)), dim=1)
 
 
 class VarNetBlock(nn.Module):
@@ -303,9 +268,10 @@ class VarNetBlock(nn.Module):
         return fastmri.fft2c(fastmri.complex_mul(x, sens_maps))
 
     def sens_reduce(self, x: torch.Tensor, sens_maps: torch.Tensor) -> torch.Tensor:
-        return fastmri.complex_mul(
-            fastmri.ifft2c(x), fastmri.complex_conj(sens_maps)
-        ).sum(dim=1, keepdim=True)
+        x = fastmri.ifft2c(x)
+        return fastmri.complex_mul(x, fastmri.complex_conj(sens_maps)).sum(
+            dim=1, keepdim=True
+        )
 
     def forward(
         self,
