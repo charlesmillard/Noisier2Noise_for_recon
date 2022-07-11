@@ -9,10 +9,10 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 
-from varnet_modified import VarNet
+from Noisier2Noise.varnet_modified import VarNet
 
-from utils import *
-from zf_data_loader import zf_data
+from Noisier2Noise.utils import *
+from Noisier2Noise.zf_data_loader import zf_data
 
 DTYPE = torch.float32
 

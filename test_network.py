@@ -4,10 +4,10 @@
 
 from skimage.metrics import structural_similarity as ssim
 
-from varnet_modified import VarNet
-from utils import *
+from Noisier2Noise.varnet_modified import VarNet
+from Noisier2Noise.utils import *
 from torch.utils.data import DataLoader
-from zf_data_loader import zf_data
+from Noisier2Noise.zf_data_loader import zf_data
 
 log_loc = 'logs/cpu/20220711-143909'
 print('Testing network saved in ' + log_loc)
