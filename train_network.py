@@ -24,9 +24,11 @@ DTYPE = torch.float32
 def end2end(config, trainloader, validloader, logdir):
     writer = SummaryWriter(logdir)
 
+    print('method at dump: ' + config['data']['method'])
     with open(logdir + '/config', 'w') as fp:
         yaml.dump(config, fp, default_flow_style=False)
 
+    # a = banana
     multicoil = config['data']['multicoil']
     if config['network']['type'] == 'unet':
         chans = 2*config['data']['nc'] if multicoil else 2
@@ -194,10 +196,12 @@ if __name__ == '__main__':
         idx = int(sys.argv[2]) - 1
         config['data']['us_fac'] = float(all_exp[idx][0])
         config['data']['us_fac_lambda'] = float(all_exp[idx][1])
-        type = all_exp[idx][2]
-        if type[0:3] == 'n2n':
+        training_method = all_exp[idx][2]
+        config['data']['method'] = str(training_method)
+        print(config['data']['method'])
+        if training_method[0:3] == 'n2n':
             config['data']['method'] = 'n2n'
-            if type[3:] == '_weighted':
+            if training_method[3:] == '_weighted':
                 config['optimizer']['weight_loss'] = True
             else:
                 config['optimizer']['weight_loss'] = False
@@ -224,7 +228,7 @@ if __name__ == '__main__':
     elif len(sys.argv) == 2:
         logdir = logdir + str(sys.argv[1])
     else:
-        logdir = logdir + '/' + str(config['data']['us_fac']) + 'x/' + type + '/' + str(sys.argv[1]) + '_' + str(config['data']['us_fac_lambda'])
+        logdir = logdir + '/' + str(config['data']['us_fac']) + 'x/' + training_method + '/' + str(sys.argv[1]) + '_' + str(config['data']['us_fac_lambda'])
 
     if ~os.path.isdir(logdir):
         os.makedirs(logdir, exist_ok=True)

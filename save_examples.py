@@ -13,40 +13,30 @@ import sys
 import os
 import matplotlib
 
-type = '8ssdu'
-root = 'logs/cuda/significant_logs_columns_multicoil_6casc/'
+type = '8depthtest'
+root = 'logs/cuda/'
 if type == '4':
-    log_loc = [root + 'full_4', root + 'ssdu_multilambda_4/60008780_lambda_us_2',
-               root + 'ssdu_prop_multilambda_4/61125448_lambda_us_20',
-               root + 'n2n_multilambda_4_unweighted/60213858_lambda_us_8',
-               root + 'n2n_multilambda_4/59623615_lambda_us_8']
+    root = 'logs/cuda/4.0x/'
+    log_loc = [root + 'full/66595042_4.0', root + 'ssdu_bern/66595042_1.6',
+               root + 'ssdu/65370413_1.6',
+               root + 'n2n_unweighted/65370413_4.0',
+               root + 'n2n_weighted/65370413_4.0']
 elif type == '8':
-    log_loc = [root + 'full_8', root + 'ssdu_multilambda_8/60258597_lambda_us_12',
-               root + 'ssdu_prop_multilambda_8/61031656_lambda_us_20',
-               root + 'n2n_multilambda_8_unweighted/60214892_lambda_us_8',
-               root + 'n2n_multilambda_8/59626802_lambda_us_8']
-elif type == '4m_unw':
-    log_loc = [root + 'n2n_multilambda_4_unweighted/60213858_lambda_us_2',
-               root + 'n2n_multilambda_4_unweighted/60213858_lambda_us_4',
-               root + 'n2n_multilambda_4_unweighted/60213858_lambda_us_6',
-               root + 'n2n_multilambda_4_unweighted/60213858_lambda_us_8']
-elif type == '8m_unw':
-    log_loc = [root + 'n2n_multilambda_8_unweighted/60214892_lambda_us_2',
-               root + 'n2n_multilambda_8_unweighted/60214892_lambda_us_4',
-               root + 'n2n_multilambda_8_unweighted/60214892_lambda_us_6',
-               root + 'n2n_multilambda_8_unweighted/60214892_lambda_us_8']
-elif type == '4m':
-    log_loc = [root + 'n2n_multilambda_4/59623615_lambda_us_8', root + 'n2n_multilambda_4/59623615_lambda_us_8',
-               root + 'n2n_multilambda_4/59623615_lambda_us_8', root + 'n2n_multilambda_4/59623615_lambda_us_8']
-elif type == '8m':
-    log_loc = [root + 'n2n_multilambda_8/59626802_lambda_us_2', root + 'n2n_multilambda_8/59626802_lambda_us_4',
-               root + 'n2n_multilambda_8/59626802_lambda_us_6', root + 'n2n_multilambda_8/59626802_lambda_us_8']
-elif type == '4ssdu':
-    log_loc = [root + '4x/ssdu_prop_multilambda_4/64772912_lambda_us_11', root + '4x/ssdu_prop_multilambda_4/64772912_lambda_us_15',
-               root + '4x/ssdu_prop_multilambda_4/61125448_lambda_us_20', root + '4x/ssdu_prop_multilambda_4/61125448_lambda_us_40']
-elif type == '8ssdu':
-    log_loc = [root + '8x/ssdu_prop_multilambda_8/63755831_lambda_us_11', root + '8x/ssdu_prop_multilambda_8/63755831_lambda_us_15',
-               root + '8x/ssdu_prop_multilambda_8/61031656_lambda_us_20', root + '8x/ssdu_prop_multilambda_8/61031656_lambda_us_40']
+    root = 'logs/cuda/8.0x/'
+    log_loc = [root + 'full/66595042_4.0', root + 'ssdu_bern/66595042_2.0',
+               root + 'ssdu/65370413_2.0',
+               root + 'n2n_unweighted/65370413_10.0',
+               root + 'n2n_weighted/65370413_10.0']
+elif type == '8mistuned':
+    root = 'logs/cuda/8.0x/'
+    log_loc = [root + 'full/66595042_4.0', root + 'ssdu_bern/66595042_4.0',
+               root + 'ssdu/65370413_4.0',
+               root + 'n2n_unweighted/65370413_12.0',
+               root + 'n2n_weighted/65370413_12.0']
+elif type == '8depthtest':
+    root = 'logs/cuda/'
+    log_loc = [root + '8.0x/full/66595042_4.0',
+               root + '73247503']
 
 xz = 120
 yz = 60
@@ -54,15 +44,15 @@ wth = 100
 
 with torch.no_grad():
     for l in log_loc:
-        sd = 420 # 260, 310, 320, 420
-        np.random.seed(sd)
-        torch.manual_seed(sd)
-        torch.cuda.manual_seed_all(sd)
-
         config = load_config(l + '/config')
         config['network']['device'] = 'cpu'
         base_net = VarNet(num_cascades=config['network']['ncascades'])
         network = passVarnet
+
+        sd = 300 # 260, 310, 320, 420
+        np.random.seed(sd)
+        torch.manual_seed(sd)
+        torch.cuda.manual_seed_all(sd)
 
         test_load = DataLoader(zf_data('test', config), batch_size=1, shuffle=True)
         base_net.load_state_dict(torch.load(l + '/state_dict', map_location=config['network']['device']))
@@ -97,6 +87,8 @@ with torch.no_grad():
             else:
                 x0_est_all = torch.cat((x0/mx, x0_est/mx), dim=0)
                 x0_est_zoom = torch.cat((x0[:, :, xz:xz + wth, yz:yz + wth]/mx, x0_est[:, :, xz:xz + wth, yz:yz + wth] / mx), dim=0)
+
+            print('MSE is {:e}'.format(torch.mean((y0-y0_est)**2)))
             break
 
 def saveIm(im, ndisp, name):

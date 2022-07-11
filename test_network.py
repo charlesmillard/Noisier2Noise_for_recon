@@ -1,3 +1,4 @@
+import numpy as np
 import torch.cuda
 import torchvision
 
@@ -9,24 +10,26 @@ from zf_data_loader import zf_data
 
 from skimage.metrics import structural_similarity as ssim
 
+from fastmri.evaluate import ssim as ssimfast
+
 import sys
 import os
 import matplotlib
 
 
-
-
 if len(sys.argv) == 1:
-    log_loc = 'logs/cuda/significant_logs_columns_multicoil_6casc/4x/ssdu_multilambda_4/63807851_lambda_us_20'
+    log_loc = 'logs/cuda/4.0x/ssdu/65370413_2.0'
 else:
     all_net_logs = []
     for l in os.walk('logs/cuda/4.0x'):
-        if l[0][-1] not in ['u', 'n', 'd', 'x']:
+        if l[0][-1] not in ['u', 'n', 'd', 'x', 'l']:
             all_net_logs.append(l[0])
     for q in os.walk('logs/cuda/8.0x'):
-        if q[0][-1] not in ['u', 'n', 'd', 'x']:
+        if q[0][-1] not in ['u', 'n', 'd', 'x', 'l']:
             all_net_logs.append(q[0])
     log_loc = all_net_logs[int(sys.argv[1]) - 1]
+
+    print('Testing network saved in ' + log_loc)
 
 config = load_config(log_loc + '/config')
 
@@ -71,8 +74,6 @@ else:
     config['network']['device'] = 'cpu'
     config['optimizer']['batch_size'] = 1
 
-
-
 loss = []
 loss_rss = []
 all_ssim = []
@@ -108,6 +109,10 @@ with torch.no_grad():
     test_load = DataLoader(zf_data('test', config), batch_size= 2*config['optimizer']['batch_size'], shuffle=True)
 
     base_net.eval()
+    loss = []
+    loss_rss = []
+    all_ssim = []
+    all_hfen = []
     for i, data in enumerate(test_load, 0):
         y0, y, y_tilde, K = data
         y0 = y0.to(config['network']['device'])
@@ -125,33 +130,29 @@ with torch.no_grad():
         else:
             y0_est = network(y, base_net)
 
-        print(torch.sum(torch.isnan(y0)), torch.sum(torch.isnan(y0_est)))
-
         y0_est[pad] = 0
 
         x0 = kspaceToRSS(y0)
         x0_est = kspaceToRSS(y0_est)
 
-        loss = []
-        loss_rss = []
-        all_ssim = []
-        all_hfen = []
         for ii in range(x0.shape[0]):
-            mx = np.array(torch.max(x0[ii].detach().cpu()))
-            x1 = np.array((x0_est[ii, 0]).detach().cpu()) / mx
-            x2 = np.array((x0[ii, 0]).detach().cpu()) / mx
-            all_ssim.append(ssim(x1, x2))
+            # mx = np.array(torch.max(x0[ii].detach().cpu()))
+            # mn = np.array(torch.min(x0[ii].detach().cpu()))
+            x1 = np.array((x0_est[ii, 0]).detach().cpu())
+            x2 = np.array((x0[ii, 0]).detach().cpu())
+            all_ssim.append(ssim(x1, x2, data_range=x2.max()))
+            print(x2.max())
+            # all_ssim.append(ssimfast(x1, x2, x2.max() - x2.min()))
             # all_hfen.append(hfen(x1, x2))
             loss.append(nmse(np.asarray(y0_est[ii].detach().cpu()), np.asarray(y0[ii].detach().cpu())))
             loss_rss.append(nmse(x1, x2))
 
-        print(loss)
-        if not torch.cuda.is_available():
-            break
+        # if not torch.cuda.is_available():
+        #     break
 
 ndisp = 8
 if not torch.cuda.is_available():
-    ndisp = 1
+    ndisp = 2
     log_loc = log_loc + '/cpu_examples'
     if not os.path.isdir(log_loc):
         os.mkdir(log_loc)
@@ -163,6 +164,16 @@ f.write("RSS loss: {:e} \n".format(10*np.log10(np.mean(loss_rss).item())))
 f.write("SSIM: {:e} \n".format(np.mean(all_ssim)))
 f.write("HFEN: {:e} \n".format(10*np.log10(np.mean(all_hfen))))
 f.write("parameters in model: {:e} \n".format(pp))
+
+f.write("loss on saved examples: ")
+for ii in range(ndisp):
+    f.write(str(np.round_(loss[-ndisp + ii], 4)) + ",  ")
+f.write("\nRSS loss on saved examples: ")
+for ii in range(ndisp):
+    f.write(str(np.round_(loss_rss[-ndisp + ii], 4)) + ",  ")
+f.write("\nSSIM on saved examples: ")
+for ii in range(ndisp):
+    f.write(str(np.round_(all_ssim[-ndisp + ii], 4)) + ",  ")
 
 np.savez(log_loc + '/results.npz', loss=loss, loss_rss=loss_rss, all_ssim=all_ssim, all_hfen=all_hfen)
 

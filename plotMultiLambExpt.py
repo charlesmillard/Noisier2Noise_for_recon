@@ -2,75 +2,96 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 from utils import *
+import seaborn as sns
 
-def read_results(log):
-    rt = 'logs/cuda/significant_logs_columns_multicoil_6casc/' + log
-    file_list_all = os.listdir(rt)
+all_net_logs = []
+for l in os.walk('logs/cuda/4.0x'):
+    if l[0][-1] not in ['u', 'n', 'd', 'x', 's', 'l']:
+        all_net_logs.append(l[0])
+for q in os.walk('logs/cuda/8.0x'):
+    if q[0][-1] not in ['u', 'n', 'd', 'x', 's', 'l']:
+        all_net_logs.append(q[0])
 
-    file_list = file_list_all
-    for ii in range(len(file_list_all)):
-        if file_list_all[ii][0:8] == log:
-            file_list.append(rt + file_list_all[ii])
+mean_ssim = []
+std_ssim = []
+mean_l2 = []
+std_l2 = []
+mean_l2_rss = []
+std_l2_rss = []
+train_type = []
+us_fac = []
+us_fac_lambda = []
+weighted = []
+for log in all_net_logs:
+    if os.path.exists(log + '/results.npz'):
+        res = np.load(log + '/results.npz')
+        mean_l2.append(np.mean(res['loss']))
+        std_l2.append(np.std(res['loss']))
+        mean_l2_rss.append(np.mean(res['loss_rss']))
+        std_l2_rss.append(np.std(res['loss_rss']))
+        mean_ssim.append(np.mean(res['all_ssim']))
+        std_ssim.append(np.std(res['all_ssim']))
 
-    loss = []
-    singular_loss = []
-    RSS_loss = []
-    us_fac = []
-    SSIM_loss = []
-    SSIM_sing_loss = []
-    for ii in range(len(file_list)):
-        config = load_config(rt + '/' + file_list[ii] + '/config')
-        us_fac.append(config['data']['us_fac_lambda'])
-        with open(rt + '/' + file_list[ii] + '/test_results.txt') as f:
-            lines = f.readlines()
-            if len(lines) == 7:
-                loss.append(float(lines[1][6:18]))
-                SSIM_loss.append(float(lines[2][6:18]))
-                singular_loss.append(float(lines[3][15:27]))
-                RSS_loss.append(float(lines[4][19:31]))
-                SSIM_sing_loss.append(float(lines[5][15:27]))
-            else:
-                loss.append(float(lines[1][15:27]))
-                SSIM_loss.append(float(lines[3][15:27]))
+        config = load_config(log + '/config')
+        train_type.append(config['data']['method'])
+        us_fac.append(config['data']['us_fac'])
+        us_fac_lambda.append(config['data']['us_fac_lambda'])
+        weighted.append(config['optimizer']['weight_loss'])
 
-    return loss, singular_loss, RSS_loss, us_fac, SSIM_loss, SSIM_sing_loss
+sns.set_theme()
+col = ['black', 'red', 'green', 'blue', 'orange']
 
-(loss_ssdu, singular_loss, RSS_loss, us_fac_ssdu, SSIM_ssdu, SSIM_sing) = read_results('ssdu_multilambda_4')
-(loss_ssdu_p, singular_loss, RSS_loss, us_fac_ssdu_p, SSIM_ssdu_p, SSIM_sing) = read_results('ssdu_prop_multilambda_4')
-(loss_unw, singular_loss, RSS_loss, us_fac_unw, SSIM_unw, SSIM_sing) = read_results('n2n_multilambda_4_unweighted')
-(loss_w, singular_loss, RSS_loss, us_fac_w, SSIM_w, SSIM_sing) = read_results('n2n_multilambda_4')
+# marker = ['--', 'o-', '*-', 's-', 'p-']
+marker = ['-', '-', '-', '-', '-']
 
-print('Best loss is {}, {}, {}'.format(np.min(loss_ssdu), np.min(loss_unw), np.min(loss_w)))
-print('Best SSIM is {}, {}, {}'.format(np.max(SSIM_ssdu), np.max(SSIM_unw), np.max(SSIM_w)))
+stats_of_int =[mean_l2]
+stds_of_int =[std_l2,  std_ssim]
+names = ['NMSE', 'SSIM']
+ylims = [[0.11, 0.18], [0.14, 0.2]]
+s_best = []
 
-print(SSIM_w, SSIM_ssdu)
-print(loss_unw, us_fac_unw)
-print(loss_w, us_fac_w)
-print(loss_ssdu)
-plt.figure()
-plt.subplot(121)
-#plt.plot([2, 8], [2.694666e-04, 2.694666e-04], '--r')
-plt.plot([2, 8], [1.944149e-04, 1.944149e-04], '--r')
-plt.plot(us_fac_ssdu, loss_ssdu, 'x', markersize=10)
-plt.plot(us_fac_ssdu_p, loss_ssdu_p, '1', markersize=10)
-plt.plot(us_fac_unw, loss_unw, '2', markersize=10)
-plt.plot(us_fac_w, loss_w, '3', markersize=10)
-plt.ylabel('k-space l2 loss')
-plt.xlabel('acceleration of second mask')
-plt.ylim((0))
-#plt.legend(['Fully sampled benchmark',  'SSDU', 'Weighted'])
-plt.title('')
+lim_idx = 0
+for us in [4, 8]:
+    plt.figure(figsize=(5, 3))
+    plt.rcParams.update({'font.family': 'Linux Libertine Display O'})
+    # plt.rcParams.update({"font.family": "Helvetica"})
+    plt.rc('axes', labelsize=20)
+    plt.rc('xtick', labelsize=14)
+    plt.rc('ytick', labelsize=14)
+    for ii in range(len(stats_of_int)):
 
-plt.subplot(122)
-#plt.plot([2, 8], [7.927881e-01, 7.927881e-01 ], '--r')
-plt.plot([2, 8], [8.714983e-01, 8.714983e-01], '--r')
-plt.plot(us_fac_ssdu, SSIM_ssdu, 'x', markersize=10)
-plt.plot(us_fac_ssdu_p, loss_ssdu_p, '1', markersize=10)
-plt.plot(us_fac_unw, SSIM_unw, '2', markersize=10)
-plt.plot(us_fac_w, SSIM_w, '3', markersize=10)
-plt.ylabel('SSIM')
-plt.xlabel('acceleration of second mask')
-# plt.ylim((0.5, 1))
-plt.legend(['Fully sampled benchmark',  'SSDU (bernoulli second mask)', 'SSDU (column second mask)', 'Proposed (Unweighted)', 'Proposed (Weighted)'])
-plt.title('')
+        s_best.append([])
+        plt.subplot(1, len(stats_of_int), ii+1)
+        s = stats_of_int[ii]
+        sd = stds_of_int[ii]
+        max_or_min = np.min if ii in [0] else np.max
+        idx = [i for i in range(len(train_type)) if train_type[i] == 'full' and us_fac[i] == us]
+        plt.plot([1, 12], [s[idx[0]], s[idx[0]]], marker[0], markersize=10, color=col[0])
+        s_best[ii].append(s[idx[0]])
+
+        idx_all = [[i for i in range(len(train_type)) if train_type[i] == 'ssdu_bern' and us_fac[i] == us],
+                   [i for i in range(len(train_type)) if train_type[i] == 'ssdu' and us_fac[i] == us],
+                   [i for i in range(len(train_type)) if
+                    train_type[i] == 'n2n' and us_fac[i] == us and weighted[i] == False],
+                   [i for i in range(len(train_type)) if
+                    train_type[i] == 'n2n' and us_fac[i] == us and weighted[i] == True]]
+        for jj in range(len(idx_all)):
+            idx = idx_all[jj]
+            unordered_us = [us_fac_lambda[i] for i in idx]
+            sorted_idx = [idx[k] for k in sorted(range(len(unordered_us)), key=lambda k: unordered_us[k])]
+            # plt.errorbar([us_fac_lambda[i] for i in sorted_idx], [s[i] for i in sorted_idx], yerr=[sd[i] for i in sorted_idx], markersize=10)
+            plt.plot([us_fac_lambda[i] for i in sorted_idx], [s[i] for i in sorted_idx], marker[jj+1], markersize=5, color=col[jj + 1])
+            s_best[ii].append(max_or_min([s[i] for i in idx]) if idx != [] else 0)
+        # plt.errorbar([us_fac_lambda[i] for i in idx], [s[i] for i in idx], yerr=[sd[i] for i in idx], markersize=10)
+        plt.xlabel('$\widetilde{R}$')
+        plt.ylabel(names[ii])
+        plt.ylim(ylims[lim_idx])
+        plt.xticks([2, 4, 6, 8, 10, 12])
+        lim_idx += 1
+
+    plt.legend(['Fully supervised', 'SSDU (original)', 'SSDU (proposed)', 'Noisier2Noise (unweighted)', 'Noisier2Noise (weighted)'], loc='upper right', fontsize=8, ncol=5)
+    plt.subplots_adjust(left=0.2, bottom=0.2, right=0.95, top=0.95, wspace=0.25, hspace=0.2)
+# plt.show()
+
 plt.show()
+print(s_best)
