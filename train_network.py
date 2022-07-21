@@ -52,15 +52,17 @@ def end2end(config, trainloader, validloader, logdir):
 
             optimizer.zero_grad()
 
-            outputs = network(y_tilde, base_net)
             if config['data']['method'] == "n2n":
+                outputs = network(y_tilde, base_net)
                 if config['optimizer']['weight_loss']:
                     loss = criterion(outputs / (1 - K), y / (1 - K))
                 else:
                     loss = criterion(outputs, y)
             elif config['data']['method'] in ["ssdu", "ssdu_bern"]:
+                outputs = network(y_tilde, base_net)
                 loss = criterion(outputs * (y != 0), y)
             else:  # fully supervised
+                outputs = network(y, base_net)
                 loss = criterion(outputs, y0)
 
             running_loss += loss
