@@ -62,9 +62,6 @@ class zf_data(Dataset):
         y0, y, y_tilde = self.get_multicoil(idx, mask_omega, mask_lambda)
         return y0.float(), y.float(), y_tilde.float(), self.K.float()
 
-    def gitem(self, idx):
-        return self.__getitem__(idx)
-
     def get_multicoil(self, idx, mask_omega, mask_lambda):
         file_idx = np.where(idx >= self.slice_cumsum)[0][-1]
         slice_idx = idx - self.slice_cumsum[file_idx]
