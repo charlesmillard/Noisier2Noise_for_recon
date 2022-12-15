@@ -1,0 +1,28 @@
+---
+# ------------------ Training configurations ------------------------
+seed: 456
+#------ optimizer
+optimizer:
+  weight_decay: 0
+  lr: 0.001
+  weight_loss: False # (1-K)^-1 weighting? (for Noisier2Noise only)
+  batch_size: 5
+  epochs: 50
+
+#----- data loader
+data:
+  location: /home/xsd618/data/fastMRI_test_subset_brain # location of data
+  us_fac: 8 # acceleration factor of first mask
+  us_fac_lambda: 4 # acceleration factor of second mask
+  method: ssdu # choose from "full", "n2n" or "ssdu"
+  sample_type: columns # choose from "columns" or "bern"
+  sample_type_lambda: columns # second mask type, either "columns", "bern" or "bern_ssdu_orig"
+  fully_samp_size: 10 # fully sampled central region
+  poly_order: 8 # polynomial order of variable density scheme
+  nx: 640
+  ny: 320
+  nc: 16
+
+#----- network params
+network:
+  ncascades: 6 # number of VarNet parameters

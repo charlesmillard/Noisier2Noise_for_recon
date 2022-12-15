@@ -1,13 +1,18 @@
 import numpy as np
+import warnings
 
 
 def gen_pdf(nx, ny, delta, p, c_sq, sample_type):
+    # generate sampling probability density
     if sample_type == "bern":
         prob_map = gen_pdf_bern(nx, ny, delta, p, c_sq, 0)
-    elif sample_type == "bern_inv":
-        prob_map = gen_pdf_bern(nx, ny, delta, p, c_sq, 1)
+    elif sample_type == "bern_ssdu_orig":
+        R = np.round(np.mean(1 / delta))
+        prob_map = np.load('original_ssdu_prob_maps/prob_map_orig_' + str(R) + '_acssz_' + str(c_sq) + '.npy')
     elif sample_type == "columns":
         prob_map = gen_pdf_columns(nx, ny, delta, p, c_sq)
+    else:
+        raise ValueError('The sampling type ' + sample_type + 'is invalid, must be one of {bern, bern_ssdu_orig, columns}')
     return prob_map
 
 
@@ -38,21 +43,15 @@ def gen_pdf_bern(nx, ny, delta, p, c_sq, inv_flag):
 
         delta_current = np.mean(prob_map)
         if delta > delta_current + eta:
-            if inv_flag:
-                b = c
-            else:
-                a = c
+            a = c
         elif delta < delta_current - eta:
-            if inv_flag:
-                a = c
-            else:
-                b = c
+            b = c
         else:
             break
 
         ii += 1
         if ii == 100:
-            print('Careful - genPDF did not converge after 100 iterations')
+            warnings.warn('gen_pdf_bern did not converge after 100 iterations')
             break
 
     return prob_map
@@ -86,7 +85,7 @@ def gen_pdf_columns(nx, ny, delta, p, c_sq):
             break
         ii += 1
         if ii == 100:
-            print('Careful - genRowsPDF did not converge after 100 iterations')
+            warnings.warn('gen_pdf_columns did not converge after 100 iterations')
             break
     prob_map = np.repeat(prob_map, nx, axis=1)
     prob_map = np.rot90(prob_map)
@@ -95,7 +94,7 @@ def gen_pdf_columns(nx, ny, delta, p, c_sq):
 
 def mask_from_prob(prob_map, sample_type):
     prob_map[prob_map > 0.99] = 1
-    if sample_type in ["bern", "bern_inv"]:
+    if sample_type in ["bern", "bern_ssdu_orig"]:
         mask = np.random.binomial(1, prob_map)
     elif sample_type == "columns":
         (nx, ny) = np.shape(prob_map)

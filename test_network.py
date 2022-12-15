@@ -2,95 +2,72 @@
 @author: Charles Millard
 """
 
+import sys
+
 from skimage.metrics import structural_similarity as ssim
-
-from Noisier2Noise.varnet_modified import VarNet
-from Noisier2Noise.utils import *
 from torch.utils.data import DataLoader
-from Noisier2Noise.zf_data_loader import zf_data
 
-log_loc = 'logs/cpu/20220711-143909'
-print('Testing network saved in ' + log_loc)
+from Noisier2Noise.varnet_complex_output import VarNet
+from Noisier2Noise.utils import *
+from Noisier2Noise.zf_data_loader import subSampledData
+from Noisier2Noise.noisier2noise_losses import val_loss
 
-config = load_config(log_loc + '/config')
-if torch.cuda.is_available():
-    config['network']['device'] = 'cuda'
-else:
-    config['network']['device'] = 'cpu'
-    config['optimizer']['batch_size'] = 1
 
-criterion = mse_loss
-
-loss = []
-loss_rss = []
-all_ssim = []
-all_hfen = []
-with torch.no_grad():
-    base_net = VarNet(num_cascades=config['network']['ncascades'])
-    network = pass_varnet
+def test_net(config, log_loc):
+    criterion = mse_loss
 
     sd = 380
-    np.random.seed(sd)
-    torch.manual_seed(sd)
-    torch.cuda.manual_seed_all(sd)
+    set_seeds(sd)
 
-    base_net.load_state_dict(torch.load(log_loc + '/state_dict', map_location=config['network']['device']))
-    base_net.to(config['network']['device'])
+    dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    # number of parameters in model
-    pp = 0
-    for p in list(base_net.parameters()):
-        nn = 1
-        for s in list(p.size()):
-            nn = nn * s
-        pp += nn
-    print('{} parameters in model'.format(pp))
+    with torch.no_grad():
+        network = VarNet(num_cascades=config['network']['ncascades'])
 
-    test_load = DataLoader(zf_data('test', config), batch_size= 2*config['optimizer']['batch_size'], shuffle=True)
+        network.load_state_dict(torch.load(log_loc + '/state_dict', map_location=dev))
+        network.to(dev)
+        network.eval()
 
-    base_net.eval()
-    loss = []
-    loss_rss = []
-    all_ssim = []
-    all_hfen = []
-    for i, data in enumerate(test_load, 0):
-        y0, y, y_tilde, K = data
-        y0 = y0.to(config['network']['device'])
-        y = y.to(config['network']['device'])
-        y_tilde = y_tilde.to(config['network']['device'])
-        K = K.to(config['network']['device'])
+        testloader = DataLoader(subSampledData('test', config), batch_size=config['optimizer']['batch_size'],
+                                shuffle=False)
 
-        pad = torch.abs(y0) < torch.mean(torch.abs(y0)) / 100
-        if config['data']['method'] == "n2n":
-            outputs = network(y_tilde, base_net)
-            y0_est = outputs * (y == 0) / (1 - K) + y
-        elif config['data']['method'] in ["ssdu", "ssdu_bern"]:
-            outputs = network(y_tilde, base_net)
-            y0_est = outputs * (y == 0) + y
-        else:
-            y0_est = network(y, base_net)
+        loss_dc = []
+        loss_hat = []
+        all_ssim_dc = []
+        all_ssim_hat = []
+        for i, data in enumerate(testloader, 0):
+            print('testing slice ' + str(i))
+            loss_val, loss_val_hat, examples = val_loss(data, network, config, criterion)
+            y0, y_tilde, ydc, yhat = examples
 
-        y0_est[pad] = 0
+            x0 = kspace_to_rss(y0)
+            x_dc = kspace_to_rss(ydc)
+            x_hat = kspace_to_rss(yhat)
+            for ii in range(x0.shape[0]):
+                x2 = np.array((x0[ii, 0]).detach().cpu())
 
-        x0 = kspace_to_rss(y0)
-        x0_est = kspace_to_rss(y0_est)
-        for ii in range(x0.shape[0]):
-            x1 = np.array((x0_est[ii, 0]).detach().cpu())
-            x2 = np.array((x0[ii, 0]).detach().cpu())
-            all_ssim.append(ssim(x1, x2, data_range=x2.max()))
-            loss.append(nmse(np.asarray(y0_est[ii].detach().cpu()), np.asarray(y0[ii].detach().cpu())))
-            loss_rss.append(nmse(x1, x2))
+                x1 = np.array((x_dc[ii, 0]).detach().cpu())
+                all_ssim_dc.append(ssim(x1, x2, data_range=x2.max()))
+                loss_dc.append(nmse(np.asarray(ydc[ii].detach().cpu()), np.asarray(y0[ii].detach().cpu())))
 
-        break
+                x1 = np.array((x_hat[ii, 0]).detach().cpu())
+                all_ssim_hat.append(ssim(x1, x2, data_range=x2.max()))
+                loss_hat.append(nmse(np.asarray(yhat[ii].detach().cpu()), np.asarray(y0[ii].detach().cpu())))
 
-f = open(log_loc + "/test_results.txt", 'w')
-f.write("model location is " + log_loc + "\n")
-f.write("loss: {:e} \n".format(10*np.log10(np.mean(loss).item())))
-f.write("RSS loss: {:e} \n".format(10*np.log10(np.mean(loss_rss).item())))
-f.write("SSIM: {:e} \n".format(np.mean(all_ssim)))
-f.write("HFEN: {:e} \n".format(10*np.log10(np.mean(all_hfen))))
-f.write("parameters in model: {:e} \n".format(pp))
+    np.savez(log_loc + '/results.npz', loss_dc=loss_dc, loss_hat=loss_hat,
+             all_ssim_dc=all_ssim_dc, all_ssim_hat=all_ssim_hat)
 
-np.savez(log_loc + '/results.npz', loss=loss, loss_rss=loss_rss, all_ssim=all_ssim, all_hfen=all_hfen)
+    print('Results saved in ' + log_loc)
 
-print('Text file with results saved in ' + log_loc)
+
+if __name__ == '__main__':
+    log_loc = sys.argv[1]
+    print('Testing network saved in ' + log_loc)
+
+    config = load_config(log_loc + '/config')
+    if not torch.cuda.is_available():
+        config['optimizer']['batch_size'] = 1
+
+    test_net(config, log_loc)
+
+    print('Testing complete')
