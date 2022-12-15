@@ -21,7 +21,7 @@ where config_name is name of one of the configuration files in the configs folde
 ```bash
 python train_network.py 1D_partitioned_ssdu
 ```
-trains according to the configuration in the 1D_partitioned_SSDU.yaml file. 
+trains according to the configuration in the 1D_partitioned_ssdu.yaml file. 
 We have provided an example configuration file for each of the training methods in the paper. All of the example configurations
 are for 8x column-wise sub-sampled data.
 
