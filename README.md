@@ -19,7 +19,7 @@ python train_network.py config_name
 
 where config_name is name of one of the configuration files in the configs folder. For instance,  
 ```bash
-python train_network.py 1D_partitioned_SSDU
+python train_network.py 1D_partitioned_ssdu
 ```
 trains according to the configuration in the 1D_partitioned_SSDU.yaml file. 
 We have provided an example configuration file for each of the training methods in the paper. All of the example configurations
