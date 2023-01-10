@@ -26,7 +26,7 @@ def training_loss(data, network, config, criterion):
         ssdu_mask = (y != 0) * (y_tilde == 0)
         loss = criterion(ssdu_mask * outputs, ssdu_mask * y)
     elif config['data']['method'] == "full":  # fully supervised
-        outputs = network(y, network)
+        outputs = pass_varnet(y, network)
         outputs *= pad_mask
         loss = criterion(outputs, y0)
     else:
