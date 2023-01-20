@@ -50,7 +50,7 @@ def train_net(config, logdir):
         for i, data in enumerate(trainloader, 0):
             optimizer.zero_grad()
             loss = training_loss(data, network, config, criterion)
-            running_loss += loss
+            running_loss += loss.item()
             loss.backward()
             optimizer.step()
 
