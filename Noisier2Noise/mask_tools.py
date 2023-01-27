@@ -8,7 +8,7 @@ def gen_pdf(nx, ny, delta, p, c_sq, sample_type):
         prob_map = gen_pdf_bern(nx, ny, delta, p, c_sq, 0)
     elif sample_type == "bern_ssdu_orig":
         R = np.round(np.mean(1 / delta))
-        prob_map = np.load('original_ssdu_prob_maps/prob_map_orig_' + str(R) + '_acssz_' + str(c_sq) + '.npy')
+        prob_map = np.load('Noisier2Noise/original_ssdu_prob_maps/prob_map_orig_' + str(R) + '_acssz_' + str(c_sq) + '.npy')
     elif sample_type == "columns":
         prob_map = gen_pdf_columns(nx, ny, delta, p, c_sq)
     else:
