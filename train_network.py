@@ -32,8 +32,9 @@ def train_net(config, logdir):
     criterion = mse_loss
 
     # data loaders
-    trainloader = DataLoader(subSampledData('train', config), batch_size=config['optimizer']['batch_size'], shuffle=True)
-    validloader = DataLoader(subSampledData('val', config), batch_size=config['optimizer']['batch_size'])
+    # print('len(subSampledData(train, config)):',len(subSampledData('train', config))) #0
+    trainloader = DataLoader(dataset=subSampledData('train', config), batch_size=config['optimizer']['batch_size'], shuffle=True)
+    validloader = DataLoader(dataset=subSampledData('val', config), batch_size=config['optimizer']['batch_size'])
 
     epoch_frac_save = 10 # save progress to writer every 10% through epoch
     nshow = trainloader.__len__() // epoch_frac_save if torch.cuda.is_available() else 1
@@ -99,13 +100,15 @@ if __name__ == '__main__':
     torch.backends.cudnn.enabled = False
 
     # load config file
-    config_name = sys.argv[1]
+    # config_name = sys.argv[1]
+    config_name = '1D_partitioned_ssdu'
     config = load_config('configs/' + config_name + '.yaml')
     print('using config file ', config_name)
 
     # create log directory
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
-    logdir = "logs/" + dev + '/' + config_name + '/' + datetime.now().strftime("%Y%m%d-%H%M%S")
+    # logdir = "logs/" + dev + '/' + config_name + '/' + datetime.now().strftime("%Y%m%d-%H%M%S")
+    logdir = config['save']['logdir'] # can change save name liu 5.3
     if ~os.path.isdir(logdir):
         os.makedirs(logdir, exist_ok=True)
     print('Saving results to directory ', logdir)

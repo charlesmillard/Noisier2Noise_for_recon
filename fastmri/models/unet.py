@@ -164,6 +164,8 @@ class TransposeConvBlock(nn.Module):
         self.out_chans = out_chans
 
         self.layers = nn.Sequential(
+            # nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True), #liu change 5.3 to avoid Checkerboard Artifacts
+            
             nn.ConvTranspose2d(
                 in_chans, out_chans, kernel_size=2, stride=2, bias=False
             ),

@@ -4,14 +4,16 @@ seed: 456
 #------ optimizer
 optimizer:
   weight_decay: 0
-  lr: 0.001
+  lr: 0.0001
   weight_loss: False # (1-K)^-1 weighting? (for Noisier2Noise only)
   batch_size: 5
+  # batch_size: 1 #lc changed 5.3 \(^o^)/~
   epochs: 50
 
 #----- data loader
 data:
-  location: /home/xsd618/data/fastMRI_test_subset_brain # location of data
+  # location: /home/xsd618/data/fastMRI_test_subset_brain # location of data  
+  location: /data/fastmri # location of data
   us_fac: 8 # acceleration factor of first mask
   us_fac_lambda: 4 # acceleration factor of second mask
   method: ssdu # choose from "full", "n2n" or "ssdu"
@@ -21,8 +23,11 @@ data:
   poly_order: 8 # polynomial order of variable density scheme
   nx: 640
   ny: 320
-  nc: 16
+  nc: 15
 
 #----- network params
 network:
-  ncascades: 6 # number of VarNet parameters
+  # ncascades: 6 # number of VarNet parameters
+  ncascades: 5 # number of VarNet parameters ---lc changed 5.3
+save:
+  logdir: save/1D_partitioned_ssdu/531save

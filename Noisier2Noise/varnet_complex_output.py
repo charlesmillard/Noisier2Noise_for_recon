@@ -262,7 +262,7 @@ class VarNetBlock(nn.Module):
         super().__init__()
 
         self.model = model
-        self.dc_weight = nn.Parameter(torch.ones(1))
+        self.dc_weight = nn.Parameter(torch.ones(1), requires_grad=False)
 
     def sens_expand(self, x: torch.Tensor, sens_maps: torch.Tensor) -> torch.Tensor:
         return fastmri.fft2c(fastmri.complex_mul(x, sens_maps))
@@ -280,10 +280,13 @@ class VarNetBlock(nn.Module):
         mask: torch.Tensor,
         sens_maps: torch.Tensor,
     ) -> torch.Tensor:
-        zero = torch.zeros(1, 1, 1, 1, 1).to(current_kspace)
-        soft_dc = torch.where(mask, current_kspace - ref_kspace, zero) * self.dc_weight
+        
         model_term = self.sens_expand(
             self.model(self.sens_reduce(current_kspace, sens_maps)), sens_maps
-        )
+        ) + current_kspace
 
-        return current_kspace - soft_dc - model_term
+        zero = torch.zeros(1, 1, 1, 1, 1).to(model_term)
+        soft_dc = torch.where(mask, model_term - ref_kspace, zero) * self.dc_weight
+        
+
+        return model_term - soft_dc
